@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reef Aquarium</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+  canvas { display: block; width: 100vw; height: 100vh; }
+  body.idle, body.idle canvas { cursor: none; }
+  #hud { display: none; position: fixed; left: 12px; top: 10px; font: 12px/1.4 ui-monospace, Consolas, monospace; color: #cfe; text-shadow: 0 0 3px #000; pointer-events: none; }
+  #err { display: none; position: fixed; inset: 0; align-items: center; justify-content: center; padding: 2em; color: #9ab; font: 18px/1.5 system-ui, sans-serif; text-align: center; background: #021018; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hud"></div>
+<div id="err"></div>
+<script type="module" src="js/main.js"></script>
+</body>
+</html>

@@ -1,0 +1,15 @@
+{
+  "name": "fayling-web-fishtank-pictureframe",
+  "version": "1.0.0",
+  "description": "Large-screen WebGPU reef aquarium picture frame: procedural corals, live rock and twelve species of reef fish with autonomous behaviour.",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node server.mjs",
+    "build": "node build.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0"
+  }
+}
