@@ -9,7 +9,8 @@
 //   ?t=seconds              start the clock at a given time
 //   ?config=<base64 JSON>   or dotted keys such as fish.population=50 (see js/config.js)
 import { TAU, clamp, lerp, perspective, ortho, lookAt, mat4Mul, mat4Invert, hexToRgb, srgbToLinear } from './math.js';
-import { loadConfig, resolvePopulation } from './config.js';
+import { resolvePopulation } from './config.js';
+import { prepareConfig, createSettings } from './settings.js';
 import { SPECIES, SPECIES_KEYS } from './species.js';
 import { buildFishMesh, FISH_STRIDE } from './fish-mesh.js';
 import { CORAL_STRIDE, SOFT_TYPES } from './coral-mesh.js';
@@ -26,7 +27,7 @@ import { BLOOM_DOWN, BLOOM_UP, COMPOSITE } from './wgsl/post.js';
 const qs = new URLSearchParams(location.search);
 const SHOT = qs.get('shot');
 const SHOT_FRAMES = Number(qs.get('frames')) || 240;
-const INFO = qs.get('info') === '1';
+const FISH_CAP = 80;
 const VIEW = qs.get('view') || '';
 const BU = GPUBufferUsage, TU = GPUTextureUsage, SS = GPUShaderStage;
 const MSAA = 4;
@@ -53,7 +54,7 @@ window.addEventListener('unhandledrejection', (e) => log('rejection: ' + (e.reas
 const linearColor = (hex) => hexToRgb(hex).map(srgbToLinear);
 
 async function main() {
-  const cfg = loadConfig();
+  const { cfg, visitOnly } = prepareConfig();
   if (!navigator.gpu) fail('WebGPU is not available in this browser.');
   const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
   if (!adapter) fail('No WebGPU adapter found.');
@@ -167,12 +168,10 @@ async function main() {
   const SCALE_FREQ = { clownfish: 70, blueTang: 110, yellowTang: 120, emperorAngelfish: 80, butterflyfish: 75, royalGramma: 70, moorishIdol: 110, lionfish: 90, damselfish: 60, anthias: 55, triggerfish: 40, morayEel: 0 };
   const STYLE = { 0: 0, 1: 1, 2: 2, 3: 3, 4: 4 };
   const fishSlots = {};
-  const lineupCount = VIEW === 'lineup' ? 1 : 0;
   const models = cfg.assets && cfg.assets.models || {};
   for (const key of SPECIES_KEYS) {
     const def = SPECIES[key];
-    const count = (distribution[key] || 0) + lineupCount;
-    if (!count) continue;
+    const count = FISH_CAP;
     let mesh = null, image = null;
     const spec = models[key];
     if (spec) {
@@ -218,7 +217,7 @@ async function main() {
     const c = qs.get('cam').split(',').map(Number);
     camBase.eye = c.slice(0, 3); camBase.target = c.slice(3, 6);
   }
-  const fov = (cfg.camera.fovDegrees || 32) * Math.PI / 180;
+  let fov = (cfg.camera.fovDegrees || 32) * Math.PI / 180;
   const eye = camBase.eye.slice(), target = camBase.target.slice();
   const view = new Float32Array(16), proj = new Float32Array(16), viewProj = new Float32Array(16), invViewProj = new Float32Array(16);
   const L = [0.22, 1, 0.3];
@@ -254,7 +253,7 @@ async function main() {
   };
   updateCamera(0, 16 / 9);
 
-  const sim = new Aquarium(reef, cfg, cfg.seed + 7, visible);
+  let sim = new Aquarium(reef, cfg, cfg.seed + 7, visible);
   if (VIEW !== 'lineup') sim.spawn(distribution);
   log(`fish: ${sim.fish.length}`);
 
@@ -371,9 +370,14 @@ async function main() {
   const shadowBG = device.createBindGroup({ layout: shadowFrameBGL, entries: [{ binding: 0, resource: { buffer: frameUB } }] });
 
   const env = cfg.environment;
-  const deep = linearColor(env.waterColor).map((c) => c * 0.32);
-  const shallow = linearColor(env.waterColor).map((c, i) => c * 1.05 + [0.02, 0.07, 0.07][i]);
-  const bubbleSources = cfg.effects.bubblesEnabled && VIEW !== 'lineup' ? reef.bubbleSources.slice(0, 6) : [];
+  let deep = [0, 0, 0], shallow = [0, 0, 0];
+  function refreshWater() {
+    const tint = linearColor(env.waterColor);
+    deep = tint.map((c) => c * 0.32);
+    shallow = tint.map((c, i) => c * 1.05 + [0.02, 0.07, 0.07][i]);
+  }
+  refreshWater();
+  const bubbleSources = () => (cfg.effects.bubblesEnabled && VIEW !== 'lineup' ? reef.bubbleSources.slice(0, 6) : []);
   const drift = [0, 0, 0];
   const current = { x: 0, y: 0, z: 0 };
   let shaderTime = 0;
@@ -389,7 +393,7 @@ async function main() {
     f[72] = W; f[73] = H; f[74] = 1 / H; f[75] = proj[5];
     f[76] = drift[0]; f[77] = drift[1]; f[78] = drift[2]; f[79] = 0;
     for (let i = 0; i < 6; i++) {
-      const s = bubbleSources[i];
+      const s = bubbleSources()[i];
       f[80 + i * 4] = s ? s[0] : 0; f[81 + i * 4] = s ? s[1] : 0; f[82 + i * 4] = s ? s[2] : 0; f[83 + i * 4] = s ? 1 : 0;
     }
     device.queue.writeBuffer(frameUB, 0, f);
@@ -515,11 +519,9 @@ async function main() {
   // Frame loop
   // ------------------------------------------------------------------------------------
   const hud = document.getElementById('hud');
-  if (INFO) hud.style.display = 'block';
-  const audio = cfg.audio.enabled ? createAquariumAudio(cfg.audio.volume) : null;
+  let audio = cfg.audio.enabled ? createAquariumAudio(cfg.audio.volume) : null;
   let time = Number(qs.get('t')) || 0, last = performance.now(), lastShown = 0, frameNo = 0, fade = SHOT ? 1 : 0;
   let shooting = false, hudTimer = 0, hudFrames = 0, cpuMs = 0, nextDue = 0;
-  const speed = cfg.fish.speedMultiplier;
   const curVec = { x: 0, y: 0, z: 0 };
   const passes = {
     shadow: { colorAttachments: [], depthStencilAttachment: { view: dynShadow.createView(), depthLoadOp: 'load', depthStoreOp: 'store' } },
@@ -556,7 +558,7 @@ async function main() {
     const cpu0 = performance.now();
     if (VIEW === 'lineup') writeLineup(time);
     else {
-      const sdt = dt * speed;
+      const sdt = dt * cfg.fish.speedMultiplier;
       const steps = Math.min(4, Math.ceil(sdt / (1 / 45)));
       for (let i = 0; i < steps; i++) sim.update(sdt / steps, time - sdt + (sdt * (i + 1)) / steps, curVec);
       sim.writeInstances(fishSlots);
@@ -613,7 +615,7 @@ async function main() {
       }
       pass.setPipeline(bgPipe);
       pass.draw(3);
-      if (bubbleSources.length) { pass.setPipeline(bubblePipe); pass.draw(6, 6 * BUBBLES_PER_SOURCE); }
+      if (bubbleSources().length) { pass.setPipeline(bubblePipe); pass.draw(6, 6 * BUBBLES_PER_SOURCE); }
       if (cfg.effects.particlesEnabled) { pass.setPipeline(particlePipe); pass.draw(6, cfg.effects.particleCount); }
       pass.end();
     }
@@ -651,7 +653,7 @@ async function main() {
     device.queue.submit([enc.finish()]);
     if (readBuf) saveShot(readBuf, bpr);
 
-    if (INFO) {
+    if (cfg.display.showInfo) {
       hudFrames++;
       hudTimer += dt;
       if (hudTimer > 0.5) {
@@ -687,7 +689,9 @@ async function main() {
   }
 
   // presentation: fullscreen on the first interaction, cursor hidden while idle
-  const goFullscreen = () => {
+  const goFullscreen = (event) => {
+    const target = event && event.target;
+    if (target instanceof Element && target.closest('#toolbar, #panel')) return;
     if (cfg.display.fullscreen && !document.fullscreenElement && document.documentElement.requestFullscreen) {
       document.documentElement.requestFullscreen().catch(() => {});
     }
@@ -695,6 +699,37 @@ async function main() {
   };
   window.addEventListener('pointerdown', goFullscreen);
   window.addEventListener('keydown', goFullscreen);
+
+  let restockTimer = 0;
+  function restock() {
+    if (VIEW === 'lineup') return;
+    const dist = resolvePopulation(cfg);
+    for (const key of SPECIES_KEYS) dist[key] = Math.min(FISH_CAP, dist[key] || 0);
+    sim = new Aquarium(reef, cfg, cfg.seed + 7, visible);
+    sim.spawn(dist);
+  }
+  function applyAudio() {
+    if (!audio && cfg.audio.enabled) audio = createAquariumAudio(cfg.audio.volume);
+    if (!audio) return;
+    audio.setVolume(cfg.audio.volume);
+    audio.setEnabled(cfg.audio.enabled);
+  }
+  createSettings(cfg, visitOnly, (path) => {
+    if (path === 'environment.waterColor') refreshWater();
+    if (path === 'camera.fovDegrees') fov = cfg.camera.fovDegrees * Math.PI / 180;
+    if (path === 'display.targetFps') { fpsTarget = cfg.display.targetFps; nextDue = 0; }
+    if (path === 'display.maxRenderScale' || path === 'display.minRenderScale') {
+      renderScale = Math.min(cfg.display.maxRenderScale, Math.max(cfg.display.minRenderScale, renderScale));
+      if (path === 'display.maxRenderScale') renderScale = cfg.display.maxRenderScale;
+      resize();
+    }
+    if (path === 'display.fullscreen' && !cfg.display.fullscreen && document.fullscreenElement) document.exitFullscreen().catch(() => {});
+    if (path.startsWith('audio.')) applyAudio();
+    if (path.startsWith('fish.') && VIEW !== 'lineup') {
+      clearTimeout(restockTimer);
+      restockTimer = setTimeout(restock, 200);
+    }
+  });
   let idleTimer = 0;
   window.addEventListener('pointermove', () => {
     document.body.classList.remove('idle');

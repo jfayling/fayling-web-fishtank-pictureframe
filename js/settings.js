@@ -1,0 +1,557 @@
+// Settings panel, modelled on fayling-web-ocean-pictureframe: a dim toolbar, a collapsible
+// panel built from a schema, and persistence in localStorage. A share link, a JSON file,
+// and "reset" round-trip the same values. Only values that differ from the defaults are
+// stored. URL overrides (?s=, ?config=, dotted keys, ?info=1) are applied on top.
+import { DEFAULT_CONFIG, deepMerge, loadConfig, resolvePopulation } from './config.js';
+import { SPECIES, SPECIES_KEYS } from './species.js';
+
+const SETTINGS_KEY = 'fishtank-settings-v1';
+
+const SPECIES_SETTINGS = SPECIES_KEYS.map((key) => [
+  'fish.speciesDistribution.' + key, SPECIES[key].name, 0, key === 'morayEel' ? 1 : 16, 1,
+]);
+
+const SECTIONS = [
+  { title: 'General', groups: [{ settings: [
+    ['display.showButtons', 'Onscreen buttons', 'toggle', 'Show', 'Hide'],
+    ['display.showInfo', 'Onscreen information', 'toggle', 'Show', 'Hide'],
+    ['display.fullscreen', 'Fullscreen on click', 'toggle', 'On', 'Off'],
+    ['display.adaptive', 'Adaptive quality', 'toggle', 'On', 'Off'],
+    ['display.targetFps', 'Target frame rate', 30, 60, 1],
+    ['display.maxRenderScale', 'Render scale', 0.5, 1, 0.05],
+    ['display.minRenderScale', 'Minimum scale', 0.35, 1, 0.05],
+  ] }] },
+  { title: 'Tank', groups: [{ settings: [
+    ['environment.waterColor', 'Water color', 'color'],
+    ['environment.waterClarity', 'Clarity', 0.3, 2, 0.01],
+    ['environment.ambientLightIntensity', 'Ambient light', 0, 2, 0.01],
+    ['environment.causticIntensity', 'Caustics', 0, 2, 0.01],
+    ['environment.currentStrength', 'Current', 0, 2, 0.01],
+    ['environment.lightRayIntensity', 'Light rays', 0, 2, 0.01],
+    ['environment.bloom', 'Bloom', 0, 0.3, 0.005],
+    ['environment.exposure', 'Exposure', 0.3, 2, 0.01],
+  ] }] },
+  { title: 'Fish', groups: [
+    { settings: [
+      ['fish.population', 'Population', 0, 80, 1],
+      ['fish.speedMultiplier', 'Speed', 0.2, 2, 0.05],
+      ['fish.schoolingEnabled', 'Schooling', 'toggle', 'On', 'Off'],
+      ['fish.collisionAvoidanceEnabled', 'Collision avoidance', 'toggle', 'On', 'Off'],
+    ] },
+    { title: 'Species', settings: SPECIES_SETTINGS },
+  ] },
+  { title: 'Effects', groups: [{ settings: [
+    ['effects.bubblesEnabled', 'Bubbles', 'toggle', 'On', 'Off'],
+    ['effects.particlesEnabled', 'Particles', 'toggle', 'On', 'Off'],
+    ['effects.particleCount', 'Particle count', 0, 4000, 50],
+    ['effects.lightRaysEnabled', 'Light rays', 'toggle', 'On', 'Off'],
+    ['effects.coralAnimationEnabled', 'Coral sway', 'toggle', 'On', 'Off'],
+  ] }] },
+  { title: 'Camera', groups: [{ settings: [
+    ['camera.movementEnabled', 'Slow pan', 'toggle', 'On', 'Off'],
+    ['camera.movementSpeed', 'Pan speed', 0, 3, 0.05],
+    ['camera.fovDegrees', 'Field of view', 20, 50, 1],
+  ] }] },
+  { title: 'Sound', groups: [{ settings: [
+    ['audio.enabled', 'Playback', 'toggle', 'On', 'Off'],
+    ['audio.volume', 'Volume', 0, 1, 0.01],
+  ] }] },
+];
+
+const SPEC = new Map();
+function eachSetting(groups, visit) {
+  for (const group of groups || []) {
+    for (const setting of group.settings || []) visit(setting);
+    eachSetting(group.groups, visit);
+  }
+}
+for (const section of SECTIONS) eachSetting(section.groups, (setting) => SPEC.set(setting[0], setting));
+
+const clone = (v) => JSON.parse(JSON.stringify(v));
+const partsOf = (path) => path.split('.');
+export function getPath(obj, path) {
+  return partsOf(path).reduce((o, k) => (o == null ? undefined : o[k]), obj);
+}
+function setPath(obj, path, value) {
+  const parts = partsOf(path);
+  let o = obj;
+  for (let i = 0; i < parts.length - 1; i++) {
+    if (!o[parts[i]] || typeof o[parts[i]] !== 'object') o[parts[i]] = {};
+    o = o[parts[i]];
+  }
+  o[parts.at(-1)] = value;
+}
+function hasPath(obj, path) {
+  const parts = partsOf(path);
+  let o = obj;
+  for (const p of parts) {
+    if (!o || typeof o !== 'object' || !Object.hasOwn(o, p)) return false;
+    o = o[p];
+  }
+  return true;
+}
+
+function booleanSetting(raw) {
+  if (typeof raw === 'boolean') return raw;
+  if (raw === 1 || raw === 0) return Boolean(raw);
+  if (typeof raw !== 'string') return undefined;
+  const value = raw.trim().toLowerCase();
+  if (value === '1' || value === 'true' || value === 'on') return true;
+  if (value === '0' || value === 'false' || value === 'off') return false;
+  return undefined;
+}
+function coerce(spec, raw) {
+  if (!spec) return undefined;
+  if (spec[2] === 'toggle') return booleanSetting(raw);
+  if (spec[2] === 'color') return typeof raw === 'string' && /^#[0-9a-f]{6}$/i.test(raw) ? raw.toLowerCase() : undefined;
+  const n = typeof raw === 'number' ? raw : Number(raw);
+  if (!Number.isFinite(n)) return undefined;
+  return Math.min(spec[3], Math.max(spec[2], n));
+}
+
+function readStorage() {
+  try {
+    const data = JSON.parse(localStorage.getItem(SETTINGS_KEY) || 'null');
+    return data && typeof data === 'object' && !Array.isArray(data) ? data : null;
+  } catch { return null; }
+}
+function decodeBase64Url(value) {
+  try {
+    const normalized = value.replaceAll('-', '+').replaceAll('_', '/');
+    const padded = normalized + '='.repeat((4 - normalized.length % 4) % 4);
+    const binary = atob(padded);
+    const bytes = Uint8Array.from(binary, (c) => c.charCodeAt(0));
+    return JSON.parse(new TextDecoder().decode(bytes));
+  } catch { return null; }
+}
+function encodeBase64Url(text) {
+  const bytes = new TextEncoder().encode(text);
+  let binary = '';
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/g, '');
+}
+
+// Apply saved settings, then a shared link, then explicit URL overrides. Keys that came
+// from the URL are not written back until the user edits them.
+export function prepareConfig(search = location.search) {
+  const cfg = clone(DEFAULT_CONFIG);
+  const visitOnly = new Set();
+  const url = new URLSearchParams(search);
+  applyDocument(cfg, readStorage());
+  if (url.has('s')) {
+    const shared = decodeBase64Url(url.get('s'));
+    if (shared && typeof shared === 'object' && !Array.isArray(shared)) {
+      for (const path of SPEC.keys()) setPath(cfg, path, getPath(DEFAULT_CONFIG, path));
+      applyDocument(cfg, shared);
+    }
+  }
+  let packed = null;
+  if (url.has('config')) {
+    try { packed = JSON.parse(atob(url.get('config').replace(/-/g, '+').replace(/_/g, '/'))); }
+    catch { /* ignored; loadConfig reports it when used directly */ }
+    applyDocument(cfg, packed, visitOnly);
+  }
+  // dotted keys that are not panel settings (models, and anything added later)
+  const urlCfg = loadConfig(search);
+  let speciesFromUrl = false;
+  let populationFromUrl = false;
+  for (const [key, value] of url) {
+    if (!key.includes('.')) continue;
+    if (SPEC.has(key)) {
+      const coerced = coerce(SPEC.get(key), value);
+      if (coerced === undefined) continue;
+      setPath(cfg, key, coerced);
+      visitOnly.add(key);
+      if (key === 'fish.population') populationFromUrl = true;
+      if (key.startsWith('fish.speciesDistribution.')) speciesFromUrl = true;
+    } else {
+      const fromUrl = getPath(urlCfg, key);
+      if (fromUrl !== undefined) setPath(cfg, key, fromUrl);
+    }
+  }
+  if (packed && hasPath(packed, 'fish.population')) populationFromUrl = true;
+  if (packed && hasPath(packed, 'fish.speciesDistribution')) speciesFromUrl = true;
+  if (url.get('info') === '1') { cfg.display.showInfo = true; visitOnly.add('display.showInfo'); }
+  if (url.has('shot')) { cfg.display.showButtons = false; visitOnly.add('display.showButtons'); }
+  // ?fish.population=50 scales the mix. A URL that names species instead is the mix itself.
+  if (speciesFromUrl && !populationFromUrl) cfg.fish.population = Object.values(cfg.fish.speciesDistribution).reduce((a, b) => a + b, 0);
+  settleFish(cfg);
+  return { cfg, visitOnly };
+}
+
+// The species sliders are the fish you actually get. A stored population that does not
+// match their sum is scaled back onto them once, here.
+function settleFish(cfg) {
+  const counts = resolvePopulation(cfg);
+  for (const key of Object.keys(counts)) {
+    const spec = SPEC.get('fish.speciesDistribution.' + key);
+    if (spec) counts[key] = Math.min(spec[3], Math.max(spec[2], counts[key]));
+  }
+  cfg.fish.speciesDistribution = counts;
+  cfg.fish.population = Object.values(counts).reduce((a, b) => a + b, 0);
+}
+
+function applyDocument(cfg, data, locked) {
+  if (!data) return;
+  for (const path of SPEC.keys()) {
+    let raw;
+    if (Object.hasOwn(data, path)) raw = data[path];
+    else if (hasPath(data, path)) raw = getPath(data, path);
+    else continue;
+    const value = coerce(SPEC.get(path), raw);
+    if (value === undefined) continue;
+    setPath(cfg, path, value);
+    if (locked) locked.add(path);
+  }
+  // seed and model paths are not panel settings, but a settings file may carry them
+  if (Number.isFinite(Number(data.seed))) cfg.seed = Number(data.seed);
+  if (data.assets && typeof data.assets === 'object') deepMerge(cfg.assets, data.assets);
+}
+
+export function createSettings(cfg, visitOnly, onChange) {
+  const panel = document.getElementById('panel');
+  const panelBody = document.getElementById('panel-body');
+  const settingsBtn = document.getElementById('settings');
+  const controls = new Map();
+  // proportions behind the population slider; species edits replace one entry
+  let mix = clone(cfg.fish.speciesDistribution);
+  let shareUrlInput = null;
+
+  function setPanelOpen(open) {
+    panel.classList.toggle('hidden', !open);
+    settingsBtn.setAttribute('aria-expanded', String(open));
+    if (open) settingsBtn.classList.add('on'); else settingsBtn.classList.remove('on');
+  }
+  function togglePanel() { setPanelOpen(panel.classList.contains('hidden')); }
+  settingsBtn.addEventListener('click', (event) => { event.stopPropagation(); togglePanel(); });
+  document.getElementById('close-settings').addEventListener('click', (event) => {
+    event.stopPropagation();
+    setPanelOpen(false);
+  });
+
+  function snapshot() {
+    const changed = {};
+    for (const path of SPEC.keys()) {
+      if (visitOnly.has(path)) continue;
+      const value = getPath(cfg, path);
+      if (value !== getPath(DEFAULT_CONFIG, path)) setPath(changed, path, value);
+    }
+    return changed;
+  }
+  function remember() {
+    try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(snapshot())); } catch { /* unavailable */ }
+    if (shareUrlInput && !shareUrlInput.hidden) shareUrlInput.value = shareUrl();
+  }
+  function shareUrl() {
+    const url = new URL(location.href);
+    url.hash = '';
+    const params = url.searchParams;
+    for (const key of [...params.keys()]) if (key === 's' || SPEC.has(key) || key === 'config' || key === 'info') params.delete(key);
+    params.set('s', encodeBase64Url(JSON.stringify(snapshot())));
+    return url.href;
+  }
+
+  function paint(path) {
+    const control = controls.get(path);
+    if (!control) return;
+    const value = getPath(cfg, path);
+    if (control.kind === 'bool') {
+      control.input.checked = value;
+      control.output.textContent = value ? control.onText : control.offText;
+    } else if (control.kind === 'color') control.input.value = value;
+    else {
+      control.input.value = String(value);
+      control.output.textContent = control.input.value;
+    }
+  }
+  function lock(path, locked) {
+    const control = controls.get(path);
+    if (!control) return;
+    control.input.disabled = locked;
+    control.row.classList.toggle('disabled', locked);
+  }
+  function refreshLocks() {
+    lock('audio.volume', !cfg.audio.enabled);
+    lock('camera.movementSpeed', !cfg.camera.movementEnabled);
+    lock('effects.particleCount', !cfg.effects.particlesEnabled);
+    lock('environment.lightRayIntensity', !cfg.effects.lightRaysEnabled);
+  }
+  function paintSound() {
+    const button = document.getElementById('sound');
+    const on = cfg.audio.enabled;
+    button.setAttribute('aria-pressed', String(on));
+    button.classList.toggle('on', on);
+    button.textContent = on ? 'Sound on' : 'Sound off';
+  }
+  function applyChrome() {
+    document.getElementById('hud').style.display = cfg.display.showInfo ? 'block' : 'none';
+    document.getElementById('toolbar').style.display = cfg.display.showButtons ? '' : 'none';
+    panel.style.top = cfg.display.showButtons ? '50px' : '10px';
+    panel.style.maxHeight = cfg.display.showButtons ? 'calc(100vh - 60px)' : 'calc(100vh - 20px)';
+  }
+
+  function commit(path, raw) {
+    const spec = SPEC.get(path);
+    const value = coerce(spec, raw);
+    if (value === undefined) return false;
+    visitOnly.delete(path);
+    if (path === 'fish.population') {
+      cfg.fish.population = value;
+      cfg.fish.speciesDistribution = clone(mix);
+      settleFish(cfg);
+      for (const key of SPECIES_KEYS) paint('fish.speciesDistribution.' + key);
+      paint('fish.population');
+    } else if (path.startsWith('fish.speciesDistribution.')) {
+      const key = path.slice('fish.speciesDistribution.'.length);
+      mix[key] = value;
+      cfg.fish.speciesDistribution[key] = value;
+      cfg.fish.population = Object.values(cfg.fish.speciesDistribution).reduce((a, b) => a + b, 0);
+      paint(path);
+      paint('fish.population');
+    } else {
+      setPath(cfg, path, value);
+      paint(path);
+    }
+    refreshLocks();
+    paintSound();
+    applyChrome();
+    remember();
+    onChange(path);
+    return true;
+  }
+
+  function setDisclosure(item, open) {
+    item.querySelector(':scope > button').setAttribute('aria-expanded', String(open));
+    item.querySelector(':scope > div').hidden = !open;
+  }
+  function addDisclosure(parent, title, kind) {
+    const item = document.createElement('div');
+    item.className = kind;
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = kind + '-toggle';
+    button.textContent = title;
+    button.setAttribute('aria-expanded', 'false');
+    const body = document.createElement('div');
+    body.className = kind + '-body';
+    body.hidden = true;
+    item.append(button, body);
+    parent.appendChild(item);
+    button.addEventListener('click', () => {
+      const willOpen = button.getAttribute('aria-expanded') !== 'true';
+      for (const sibling of parent.children) {
+        if (sibling.classList.contains(kind)) setDisclosure(sibling, sibling === item && willOpen);
+      }
+    });
+    return body;
+  }
+  function addSlider(parent, path, label, min, max, step) {
+    const row = document.createElement('label');
+    const name = document.createElement('span'); name.textContent = label;
+    const val = document.createElement('output');
+    const inp = document.createElement('input');
+    Object.assign(inp, { type: 'range', min, max, step, value: getPath(cfg, path) });
+    val.textContent = inp.value;
+    inp.addEventListener('input', () => commit(path, Number(inp.value)));
+    row.append(name, inp, val);
+    parent.appendChild(row);
+    controls.set(path, { input: inp, output: val, row, kind: 'number' });
+  }
+  function addToggle(parent, path, label, onText, offText) {
+    const row = document.createElement('label');
+    row.className = 'toggle';
+    const name = document.createElement('span'); name.textContent = label;
+    const val = document.createElement('output');
+    const inp = document.createElement('input');
+    inp.type = 'checkbox';
+    inp.checked = getPath(cfg, path);
+    val.textContent = inp.checked ? onText : offText;
+    inp.addEventListener('change', () => commit(path, inp.checked));
+    const choice = document.createElement('span');
+    choice.className = 'choice';
+    choice.append(inp, val);
+    row.append(name, choice);
+    parent.appendChild(row);
+    controls.set(path, { input: inp, output: val, row, kind: 'bool', onText, offText });
+  }
+  function addColor(parent, path, label) {
+    const row = document.createElement('label');
+    row.className = 'color';
+    const name = document.createElement('span'); name.textContent = label;
+    const inp = document.createElement('input');
+    inp.type = 'color';
+    inp.value = getPath(cfg, path);
+    inp.addEventListener('input', () => commit(path, inp.value));
+    row.append(name, inp);
+    parent.appendChild(row);
+    controls.set(path, { input: inp, row, kind: 'color' });
+  }
+  function addSetting(host, setting) {
+    if (setting[2] === 'toggle') addToggle(host, setting[0], setting[1], setting[3], setting[4]);
+    else if (setting[2] === 'color') addColor(host, setting[0], setting[1]);
+    else addSlider(host, ...setting);
+  }
+  function addGroups(parent, groups, kind) {
+    let first = null;
+    for (const group of groups || []) {
+      const host = group.title ? addDisclosure(parent, group.title, kind) : parent;
+      if (group.title && !first) first = host;
+      for (const setting of group.settings || []) addSetting(host, setting);
+      addGroups(host, group.groups, 'subgroup');
+    }
+    if (first) setDisclosure(first.parentElement, true);
+  }
+  function addShortcuts(parent) {
+    const wrap = document.createElement('div');
+    wrap.className = 'shortcuts';
+    const heading = document.createElement('h3');
+    heading.textContent = 'Shortcuts';
+    const list = document.createElement('dl');
+    for (const [key, action] of [
+      ['F1', 'Show settings'],
+      ['Esc', 'Close settings'],
+      ['H', 'Show or hide settings'],
+      ['M', 'Turn sound on or off'],
+    ]) {
+      const term = document.createElement('dt'); term.textContent = key;
+      const detail = document.createElement('dd'); detail.textContent = action;
+      list.append(term, detail);
+    }
+    wrap.append(heading, list);
+    parent.appendChild(wrap);
+  }
+
+  const sectionBodies = [];
+  for (const section of SECTIONS) {
+    const body = addDisclosure(panelBody, section.title, 'section');
+    sectionBodies.push(body);
+    addGroups(body, section.groups, 'group');
+    if (section.title === 'General') addShortcuts(body);
+  }
+  setDisclosure(sectionBodies[0].parentElement, true);
+
+  const io = document.createElement('div');
+  io.className = 'io';
+  const exportBtn = button('Export');
+  const importBtn = button('Import');
+  const shareBtn = button('Share link');
+  const resetBtn = button('Reset to defaults');
+  shareUrlInput = document.createElement('input');
+  shareUrlInput.type = 'text';
+  shareUrlInput.className = 'share-url';
+  shareUrlInput.readOnly = true;
+  shareUrlInput.hidden = true;
+  shareUrlInput.spellcheck = false;
+  shareUrlInput.setAttribute('aria-label', 'Share URL');
+  const fileInput = document.createElement('input');
+  fileInput.type = 'file';
+  fileInput.accept = 'application/json,.json';
+  fileInput.hidden = true;
+  io.append(exportBtn, importBtn, shareBtn, resetBtn, shareUrlInput, fileInput);
+  const status = document.createElement('div');
+  status.className = 'status';
+  status.setAttribute('role', 'status');
+  panelBody.append(io, status);
+
+  let statusToken = 0;
+  function note(text) {
+    status.textContent = text;
+    const token = ++statusToken;
+    setTimeout(() => { if (token === statusToken) status.textContent = ''; }, 4000);
+  }
+  function button(text) {
+    const el = document.createElement('button');
+    el.type = 'button';
+    el.textContent = text;
+    return el;
+  }
+  function exportSettings() {
+    const exported = {};
+    for (const path of SPEC.keys()) setPath(exported, path, getPath(cfg, path));
+    const blob = new Blob([JSON.stringify(exported, null, 2) + '\n'], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'aquarium-settings.json';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1500);
+    note('Exported settings');
+  }
+  function importSettings(data) {
+    if (!data || typeof data !== 'object' || Array.isArray(data)) { note('Settings file must be a JSON object'); return; }
+    let count = 0;
+    const fish = [];
+    for (const path of SPEC.keys()) {
+      const raw = Object.hasOwn(data, path) ? data[path] : hasPath(data, path) ? getPath(data, path) : undefined;
+      if (raw === undefined) continue;
+      const value = coerce(SPEC.get(path), raw);
+      if (value === undefined) continue;
+      visitOnly.delete(path);
+      setPath(cfg, path, value);
+      count++;
+      if (path.startsWith('fish.')) fish.push(path);
+    }
+    mix = clone(cfg.fish.speciesDistribution);
+    settleFish(cfg);
+    for (const path of SPEC.keys()) paint(path);
+    refreshLocks();
+    paintSound();
+    applyChrome();
+    remember();
+    for (const path of SPEC.keys()) if (!path.startsWith('fish.')) onChange(path);
+    if (fish.length) onChange('fish.population');
+    note(count ? `Imported ${count} setting${count === 1 ? '' : 's'}` : 'No recognized settings');
+  }
+  function resetAll() {
+    for (const path of SPEC.keys()) {
+      visitOnly.delete(path);
+      setPath(cfg, path, getPath(DEFAULT_CONFIG, path));
+    }
+    mix = clone(cfg.fish.speciesDistribution);
+    for (const path of SPEC.keys()) paint(path);
+    refreshLocks();
+    paintSound();
+    applyChrome();
+    remember();
+    for (const path of SPEC.keys()) onChange(path);
+    note('Reset to defaults');
+  }
+
+  exportBtn.addEventListener('click', exportSettings);
+  importBtn.addEventListener('click', () => fileInput.click());
+  shareBtn.addEventListener('click', async () => {
+    shareUrlInput.hidden = false;
+    shareUrlInput.value = shareUrl();
+    shareUrlInput.focus();
+    shareUrlInput.select();
+    try { await navigator.clipboard.writeText(shareUrlInput.value); note('Share link copied'); }
+    catch { note('Share link selected'); }
+  });
+  shareUrlInput.addEventListener('focus', () => shareUrlInput.select());
+  resetBtn.addEventListener('click', resetAll);
+  fileInput.addEventListener('change', async () => {
+    const file = fileInput.files && fileInput.files[0];
+    if (!file) return;
+    try { importSettings(JSON.parse(await file.text())); }
+    catch { note('Could not read that settings file'); }
+    finally { fileInput.value = ''; }
+  });
+
+  document.getElementById('sound').addEventListener('click', (event) => {
+    event.stopPropagation();
+    commit('audio.enabled', !cfg.audio.enabled);
+  });
+  addEventListener('keydown', (event) => {
+    if (event.repeat) return;
+    const field = event.target instanceof Element && event.target.closest('input, textarea, select');
+    if (event.code === 'Escape') setPanelOpen(false);
+    if (event.code === 'F1') { event.preventDefault(); setPanelOpen(true); }
+    if (field || event.ctrlKey || event.metaKey || event.altKey) return;
+    if (event.code === 'KeyH') togglePanel();
+    if (event.code === 'KeyM') commit('audio.enabled', !cfg.audio.enabled);
+  });
+
+  refreshLocks();
+  paintSound();
+  applyChrome();
+  return { note };
+}

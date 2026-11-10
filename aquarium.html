@@ -8,13 +8,88 @@
   html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
   canvas { display: block; width: 100vw; height: 100vh; }
   body.idle, body.idle canvas { cursor: none; }
-  #hud { display: none; position: fixed; left: 12px; top: 10px; font: 12px/1.4 ui-monospace, Consolas, monospace; color: #cfe; text-shadow: 0 0 3px #000; pointer-events: none; }
-  #err { display: none; position: fixed; inset: 0; align-items: center; justify-content: center; padding: 2em; color: #9ab; font: 18px/1.5 system-ui, sans-serif; text-align: center; background: #021018; white-space: pre-wrap; }
+  body.idle #toolbar, body.idle #toolbar *, body.idle #panel, body.idle #panel * { cursor: auto; }
+  #hud { display: none; position: fixed; left: 12px; top: 10px; z-index: 1; font: 12px/1.4 ui-monospace, Consolas, monospace; color: #cfe; text-shadow: 0 0 3px #000; pointer-events: none; }
+  #toolbar { position: fixed; top: 10px; right: 12px; z-index: 2; display: flex; gap: 8px; }
+  #toolbar button { padding: 6px 12px; border: 1px solid #e5e1d822; border-radius: 8px; background: #0b0f1488;
+                    color: #e5e1d8; font: 12px/1.3 system-ui, sans-serif; cursor: pointer; backdrop-filter: blur(6px);
+                    opacity: .38; transition: opacity .15s ease, background .15s ease; }
+  #toolbar button:hover, #toolbar button:focus-visible { opacity: 1; background: #18222ce6; }
+  #toolbar button:focus-visible { outline: 2px solid #e2a04e; outline-offset: 2px; }
+  #sound::before { content: '♪'; display: inline-block; width: 16px; opacity: .7; }
+  #sound.on, #settings.on { border-color: #e2a04eaa; opacity: 1; }
+  #sound.on::before { opacity: 1; }
+  #panel { position: fixed; z-index: 3; right: 12px; top: 50px; width: 330px; max-height: calc(100vh - 60px);
+           display: flex; flex-direction: column; overflow: hidden; border-radius: 8px;
+           background: #0b0f14c8; backdrop-filter: blur(6px); color: #e5e1d8; font: 12px/1.3 system-ui, sans-serif; }
+  #panel.hidden { display: none; }
+  #panel .panel-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px;
+                      padding: 8px 8px 8px 12px; border-bottom: 1px solid #e5e1d822; }
+  #panel .panel-bar span { font: 650 12px/1.2 system-ui, sans-serif; letter-spacing: .06em; text-transform: uppercase; }
+  #close-settings { width: 28px; height: 28px; border: 0; border-radius: 6px; background: transparent;
+                    color: inherit; font: 20px/1 system-ui, sans-serif; cursor: pointer; }
+  #close-settings:hover { background: #18222ce6; }
+  #close-settings:focus-visible { outline: 2px solid #e2a04e; outline-offset: 2px; }
+  #panel-body { overflow: auto; min-height: 0; padding: 8px 12px 10px; }
+  #panel .section-toggle, #panel .group-toggle { display: flex; width: 100%; align-items: center; gap: 8px;
+              padding: 0; border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; }
+  #panel .section-toggle { margin: 10px 0 0; padding-top: 8px; border-top: 1px solid #e5e1d822;
+                           font: 650 12px/1.2 system-ui, sans-serif; letter-spacing: .06em; text-transform: uppercase; }
+  #panel .section:first-child .section-toggle { margin-top: 0; padding-top: 0; border-top: 0; }
+  #panel .group-toggle { margin: 7px 0 0; font: 600 11px/1.2 system-ui, sans-serif; letter-spacing: .04em;
+                         text-transform: uppercase; opacity: .72; }
+  #panel .section-toggle::before, #panel .group-toggle::before { content: ''; flex: 0 0 auto; width: 0; height: 0;
+              border-left: 4px solid transparent; border-right: 4px solid transparent; border-top: 5px solid currentColor;
+              transform: rotate(-90deg); }
+  #panel .section-toggle[aria-expanded="true"]::before, #panel .group-toggle[aria-expanded="true"]::before { transform: none; }
+  #panel .section-toggle:hover, #panel .group-toggle:hover { color: #fff; }
+  #panel .section-toggle:focus-visible, #panel .group-toggle:focus-visible { outline: 2px solid #e2a04e; outline-offset: 2px; }
+  #panel .section-body { padding: 4px 0 2px; }
+  #panel .group-body { margin-left: 14px; }
+  #panel label { display: grid; grid-template-columns: 1fr 110px 72px; gap: 6px; align-items: center; margin: 3px 0; }
+  #panel label.disabled { opacity: .38; }
+  #panel input[type="range"] { width: 110px; accent-color: #e2a04e; }
+  #panel label.color { grid-template-columns: 1fr auto; }
+  #panel input[type="color"] { width: 40px; height: 25px; padding: 1px; border: 1px solid #e5e1d833;
+                               border-radius: 5px; background: #18222c; cursor: pointer; }
+  #panel label.toggle { grid-template-columns: 1fr auto; }
+  #panel label.toggle .choice { display: flex; align-items: center; gap: 8px; }
+  #panel label.toggle input { width: 16px; height: 16px; accent-color: #e2a04e; }
+  #panel label.toggle output { width: auto; min-width: 2.6em; text-align: left; }
+  #panel output { text-align: right; font-variant-numeric: tabular-nums; opacity: .8; }
+  #panel .io { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  #panel .io button { padding: 5px 10px; border: 1px solid #e5e1d855; border-radius: 6px;
+                      background: #18222ccc; color: inherit; font: inherit; cursor: pointer; }
+  #panel .io button:hover { background: #243140; }
+  #panel .io button:focus-visible { outline: 2px solid #e2a04e; outline-offset: 1px; }
+  #panel .share-url { flex: 1 0 100%; box-sizing: border-box; width: 100%; margin: 0; padding: 4px 6px;
+                      border: 1px solid #e5e1d833; border-radius: 5px; background: #18222c; color: inherit;
+                      font: 11px/1.3 ui-monospace, Consolas, monospace; }
+  #panel .share-url[hidden] { display: none; }
+  #panel .status { min-height: 1.2em; margin-top: 5px; opacity: .75; }
+  #panel .shortcuts { margin-top: 10px; }
+  #panel .shortcuts h3 { margin: 0 0 4px; font: 600 11px/1.2 system-ui, sans-serif; letter-spacing: .04em;
+                         text-transform: uppercase; opacity: .62; }
+  #panel .shortcuts dl { display: grid; grid-template-columns: auto 1fr; gap: 3px 10px; margin: 0; }
+  #panel .shortcuts dt { color: #f0e6d4; }
+  #panel .shortcuts dd { margin: 0; opacity: .8; }
+  #err { display: none; position: fixed; inset: 0; z-index: 5; align-items: center; justify-content: center; padding: 2em; color: #9ab; font: 18px/1.5 system-ui, sans-serif; text-align: center; background: #021018; white-space: pre-wrap; }
 </style>
 </head>
 <body>
 <canvas id="c"></canvas>
 <div id="hud"></div>
+<div id="toolbar">
+  <button id="sound" type="button" aria-pressed="false" title="Toggle aquarium audio (M)">Sound off</button>
+  <button id="settings" type="button" aria-expanded="false" title="Show settings (F1)">Settings</button>
+</div>
+<div id="panel" class="hidden">
+  <div class="panel-bar">
+    <span>Settings</span>
+    <button id="close-settings" type="button" aria-label="Close settings" title="Close settings (Esc)">×</button>
+  </div>
+  <div id="panel-body"></div>
+</div>
 <div id="err"></div>
 <script type="module">
 // ---- js/wgsl/common.js ----
@@ -1682,6 +1757,8 @@ const DEFAULT_CONFIG = {
     height: 0,
     targetFps: 60,
     fullscreen: true,      // request fullscreen on the first click or key press
+    showButtons: true,     // the settings toolbar; hidden while it stays idle-dim
+    showInfo: false,       // frame-rate readout; also forced on for one visit by ?info=1
     adaptive: true,        // lower render scale, then drop to 30 FPS, when frames run long
     maxRenderScale: 1,     // fraction of the device pixel size to render at
     minRenderScale: 0.5,
@@ -4241,7 +4318,8 @@ function createAquariumAudio(volume = 0.35) {
   if (!Ctx) return null;
   const ac = new Ctx();
   const master = ac.createGain();
-  master.gain.value = volume;
+  let level = volume;
+  master.gain.value = level;
   master.connect(ac.destination);
 
   // two seconds of brown noise, looped
@@ -4277,8 +4355,10 @@ function createAquariumAudio(volume = 0.35) {
   }
   return {
     resume() { if (ac.state !== 'running') ac.resume(); },
+    setVolume(v) { level = v; master.gain.value = v; },
+    setEnabled(on) { master.gain.value = on ? level : 0; if (on) this.resume(); },
     update(dt) {
-      if (ac.state !== 'running') return;
+      if (ac.state !== 'running' || master.gain.value === 0) return;
       humGain.gain.value = 0.45 + 0.08 * Math.sin(ac.currentTime * 0.07);
       nextBlip -= dt;
       if (nextBlip <= 0) {
@@ -4287,6 +4367,564 @@ function createAquariumAudio(volume = 0.35) {
       }
     },
   };
+}
+
+// ---- js/settings.js ----
+// Settings panel, modelled on fayling-web-ocean-pictureframe: a dim toolbar, a collapsible
+// panel built from a schema, and persistence in localStorage. A share link, a JSON file,
+// and "reset" round-trip the same values. Only values that differ from the defaults are
+// stored. URL overrides (?s=, ?config=, dotted keys, ?info=1) are applied on top.
+
+
+const SETTINGS_KEY = 'fishtank-settings-v1';
+
+const SPECIES_SETTINGS = SPECIES_KEYS.map((key) => [
+  'fish.speciesDistribution.' + key, SPECIES[key].name, 0, key === 'morayEel' ? 1 : 16, 1,
+]);
+
+const SECTIONS = [
+  { title: 'General', groups: [{ settings: [
+    ['display.showButtons', 'Onscreen buttons', 'toggle', 'Show', 'Hide'],
+    ['display.showInfo', 'Onscreen information', 'toggle', 'Show', 'Hide'],
+    ['display.fullscreen', 'Fullscreen on click', 'toggle', 'On', 'Off'],
+    ['display.adaptive', 'Adaptive quality', 'toggle', 'On', 'Off'],
+    ['display.targetFps', 'Target frame rate', 30, 60, 1],
+    ['display.maxRenderScale', 'Render scale', 0.5, 1, 0.05],
+    ['display.minRenderScale', 'Minimum scale', 0.35, 1, 0.05],
+  ] }] },
+  { title: 'Tank', groups: [{ settings: [
+    ['environment.waterColor', 'Water color', 'color'],
+    ['environment.waterClarity', 'Clarity', 0.3, 2, 0.01],
+    ['environment.ambientLightIntensity', 'Ambient light', 0, 2, 0.01],
+    ['environment.causticIntensity', 'Caustics', 0, 2, 0.01],
+    ['environment.currentStrength', 'Current', 0, 2, 0.01],
+    ['environment.lightRayIntensity', 'Light rays', 0, 2, 0.01],
+    ['environment.bloom', 'Bloom', 0, 0.3, 0.005],
+    ['environment.exposure', 'Exposure', 0.3, 2, 0.01],
+  ] }] },
+  { title: 'Fish', groups: [
+    { settings: [
+      ['fish.population', 'Population', 0, 80, 1],
+      ['fish.speedMultiplier', 'Speed', 0.2, 2, 0.05],
+      ['fish.schoolingEnabled', 'Schooling', 'toggle', 'On', 'Off'],
+      ['fish.collisionAvoidanceEnabled', 'Collision avoidance', 'toggle', 'On', 'Off'],
+    ] },
+    { title: 'Species', settings: SPECIES_SETTINGS },
+  ] },
+  { title: 'Effects', groups: [{ settings: [
+    ['effects.bubblesEnabled', 'Bubbles', 'toggle', 'On', 'Off'],
+    ['effects.particlesEnabled', 'Particles', 'toggle', 'On', 'Off'],
+    ['effects.particleCount', 'Particle count', 0, 4000, 50],
+    ['effects.lightRaysEnabled', 'Light rays', 'toggle', 'On', 'Off'],
+    ['effects.coralAnimationEnabled', 'Coral sway', 'toggle', 'On', 'Off'],
+  ] }] },
+  { title: 'Camera', groups: [{ settings: [
+    ['camera.movementEnabled', 'Slow pan', 'toggle', 'On', 'Off'],
+    ['camera.movementSpeed', 'Pan speed', 0, 3, 0.05],
+    ['camera.fovDegrees', 'Field of view', 20, 50, 1],
+  ] }] },
+  { title: 'Sound', groups: [{ settings: [
+    ['audio.enabled', 'Playback', 'toggle', 'On', 'Off'],
+    ['audio.volume', 'Volume', 0, 1, 0.01],
+  ] }] },
+];
+
+const SPEC = new Map();
+function eachSetting(groups, visit) {
+  for (const group of groups || []) {
+    for (const setting of group.settings || []) visit(setting);
+    eachSetting(group.groups, visit);
+  }
+}
+for (const section of SECTIONS) eachSetting(section.groups, (setting) => SPEC.set(setting[0], setting));
+
+const clone = (v) => JSON.parse(JSON.stringify(v));
+const partsOf = (path) => path.split('.');
+function getPath(obj, path) {
+  return partsOf(path).reduce((o, k) => (o == null ? undefined : o[k]), obj);
+}
+function setPath(obj, path, value) {
+  const parts = partsOf(path);
+  let o = obj;
+  for (let i = 0; i < parts.length - 1; i++) {
+    if (!o[parts[i]] || typeof o[parts[i]] !== 'object') o[parts[i]] = {};
+    o = o[parts[i]];
+  }
+  o[parts.at(-1)] = value;
+}
+function hasPath(obj, path) {
+  const parts = partsOf(path);
+  let o = obj;
+  for (const p of parts) {
+    if (!o || typeof o !== 'object' || !Object.hasOwn(o, p)) return false;
+    o = o[p];
+  }
+  return true;
+}
+
+function booleanSetting(raw) {
+  if (typeof raw === 'boolean') return raw;
+  if (raw === 1 || raw === 0) return Boolean(raw);
+  if (typeof raw !== 'string') return undefined;
+  const value = raw.trim().toLowerCase();
+  if (value === '1' || value === 'true' || value === 'on') return true;
+  if (value === '0' || value === 'false' || value === 'off') return false;
+  return undefined;
+}
+function coerce(spec, raw) {
+  if (!spec) return undefined;
+  if (spec[2] === 'toggle') return booleanSetting(raw);
+  if (spec[2] === 'color') return typeof raw === 'string' && /^#[0-9a-f]{6}$/i.test(raw) ? raw.toLowerCase() : undefined;
+  const n = typeof raw === 'number' ? raw : Number(raw);
+  if (!Number.isFinite(n)) return undefined;
+  return Math.min(spec[3], Math.max(spec[2], n));
+}
+
+function readStorage() {
+  try {
+    const data = JSON.parse(localStorage.getItem(SETTINGS_KEY) || 'null');
+    return data && typeof data === 'object' && !Array.isArray(data) ? data : null;
+  } catch { return null; }
+}
+function decodeBase64Url(value) {
+  try {
+    const normalized = value.replaceAll('-', '+').replaceAll('_', '/');
+    const padded = normalized + '='.repeat((4 - normalized.length % 4) % 4);
+    const binary = atob(padded);
+    const bytes = Uint8Array.from(binary, (c) => c.charCodeAt(0));
+    return JSON.parse(new TextDecoder().decode(bytes));
+  } catch { return null; }
+}
+function encodeBase64Url(text) {
+  const bytes = new TextEncoder().encode(text);
+  let binary = '';
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/g, '');
+}
+
+// Apply saved settings, then a shared link, then explicit URL overrides. Keys that came
+// from the URL are not written back until the user edits them.
+function prepareConfig(search = location.search) {
+  const cfg = clone(DEFAULT_CONFIG);
+  const visitOnly = new Set();
+  const url = new URLSearchParams(search);
+  applyDocument(cfg, readStorage());
+  if (url.has('s')) {
+    const shared = decodeBase64Url(url.get('s'));
+    if (shared && typeof shared === 'object' && !Array.isArray(shared)) {
+      for (const path of SPEC.keys()) setPath(cfg, path, getPath(DEFAULT_CONFIG, path));
+      applyDocument(cfg, shared);
+    }
+  }
+  let packed = null;
+  if (url.has('config')) {
+    try { packed = JSON.parse(atob(url.get('config').replace(/-/g, '+').replace(/_/g, '/'))); }
+    catch { /* ignored; loadConfig reports it when used directly */ }
+    applyDocument(cfg, packed, visitOnly);
+  }
+  // dotted keys that are not panel settings (models, and anything added later)
+  const urlCfg = loadConfig(search);
+  let speciesFromUrl = false;
+  let populationFromUrl = false;
+  for (const [key, value] of url) {
+    if (!key.includes('.')) continue;
+    if (SPEC.has(key)) {
+      const coerced = coerce(SPEC.get(key), value);
+      if (coerced === undefined) continue;
+      setPath(cfg, key, coerced);
+      visitOnly.add(key);
+      if (key === 'fish.population') populationFromUrl = true;
+      if (key.startsWith('fish.speciesDistribution.')) speciesFromUrl = true;
+    } else {
+      const fromUrl = getPath(urlCfg, key);
+      if (fromUrl !== undefined) setPath(cfg, key, fromUrl);
+    }
+  }
+  if (packed && hasPath(packed, 'fish.population')) populationFromUrl = true;
+  if (packed && hasPath(packed, 'fish.speciesDistribution')) speciesFromUrl = true;
+  if (url.get('info') === '1') { cfg.display.showInfo = true; visitOnly.add('display.showInfo'); }
+  if (url.has('shot')) { cfg.display.showButtons = false; visitOnly.add('display.showButtons'); }
+  // ?fish.population=50 scales the mix. A URL that names species instead is the mix itself.
+  if (speciesFromUrl && !populationFromUrl) cfg.fish.population = Object.values(cfg.fish.speciesDistribution).reduce((a, b) => a + b, 0);
+  settleFish(cfg);
+  return { cfg, visitOnly };
+}
+
+// The species sliders are the fish you actually get. A stored population that does not
+// match their sum is scaled back onto them once, here.
+function settleFish(cfg) {
+  const counts = resolvePopulation(cfg);
+  for (const key of Object.keys(counts)) {
+    const spec = SPEC.get('fish.speciesDistribution.' + key);
+    if (spec) counts[key] = Math.min(spec[3], Math.max(spec[2], counts[key]));
+  }
+  cfg.fish.speciesDistribution = counts;
+  cfg.fish.population = Object.values(counts).reduce((a, b) => a + b, 0);
+}
+
+function applyDocument(cfg, data, locked) {
+  if (!data) return;
+  for (const path of SPEC.keys()) {
+    let raw;
+    if (Object.hasOwn(data, path)) raw = data[path];
+    else if (hasPath(data, path)) raw = getPath(data, path);
+    else continue;
+    const value = coerce(SPEC.get(path), raw);
+    if (value === undefined) continue;
+    setPath(cfg, path, value);
+    if (locked) locked.add(path);
+  }
+  // seed and model paths are not panel settings, but a settings file may carry them
+  if (Number.isFinite(Number(data.seed))) cfg.seed = Number(data.seed);
+  if (data.assets && typeof data.assets === 'object') deepMerge(cfg.assets, data.assets);
+}
+
+function createSettings(cfg, visitOnly, onChange) {
+  const panel = document.getElementById('panel');
+  const panelBody = document.getElementById('panel-body');
+  const settingsBtn = document.getElementById('settings');
+  const controls = new Map();
+  // proportions behind the population slider; species edits replace one entry
+  let mix = clone(cfg.fish.speciesDistribution);
+  let shareUrlInput = null;
+
+  function setPanelOpen(open) {
+    panel.classList.toggle('hidden', !open);
+    settingsBtn.setAttribute('aria-expanded', String(open));
+    if (open) settingsBtn.classList.add('on'); else settingsBtn.classList.remove('on');
+  }
+  function togglePanel() { setPanelOpen(panel.classList.contains('hidden')); }
+  settingsBtn.addEventListener('click', (event) => { event.stopPropagation(); togglePanel(); });
+  document.getElementById('close-settings').addEventListener('click', (event) => {
+    event.stopPropagation();
+    setPanelOpen(false);
+  });
+
+  function snapshot() {
+    const changed = {};
+    for (const path of SPEC.keys()) {
+      if (visitOnly.has(path)) continue;
+      const value = getPath(cfg, path);
+      if (value !== getPath(DEFAULT_CONFIG, path)) setPath(changed, path, value);
+    }
+    return changed;
+  }
+  function remember() {
+    try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(snapshot())); } catch { /* unavailable */ }
+    if (shareUrlInput && !shareUrlInput.hidden) shareUrlInput.value = shareUrl();
+  }
+  function shareUrl() {
+    const url = new URL(location.href);
+    url.hash = '';
+    const params = url.searchParams;
+    for (const key of [...params.keys()]) if (key === 's' || SPEC.has(key) || key === 'config' || key === 'info') params.delete(key);
+    params.set('s', encodeBase64Url(JSON.stringify(snapshot())));
+    return url.href;
+  }
+
+  function paint(path) {
+    const control = controls.get(path);
+    if (!control) return;
+    const value = getPath(cfg, path);
+    if (control.kind === 'bool') {
+      control.input.checked = value;
+      control.output.textContent = value ? control.onText : control.offText;
+    } else if (control.kind === 'color') control.input.value = value;
+    else {
+      control.input.value = String(value);
+      control.output.textContent = control.input.value;
+    }
+  }
+  function lock(path, locked) {
+    const control = controls.get(path);
+    if (!control) return;
+    control.input.disabled = locked;
+    control.row.classList.toggle('disabled', locked);
+  }
+  function refreshLocks() {
+    lock('audio.volume', !cfg.audio.enabled);
+    lock('camera.movementSpeed', !cfg.camera.movementEnabled);
+    lock('effects.particleCount', !cfg.effects.particlesEnabled);
+    lock('environment.lightRayIntensity', !cfg.effects.lightRaysEnabled);
+  }
+  function paintSound() {
+    const button = document.getElementById('sound');
+    const on = cfg.audio.enabled;
+    button.setAttribute('aria-pressed', String(on));
+    button.classList.toggle('on', on);
+    button.textContent = on ? 'Sound on' : 'Sound off';
+  }
+  function applyChrome() {
+    document.getElementById('hud').style.display = cfg.display.showInfo ? 'block' : 'none';
+    document.getElementById('toolbar').style.display = cfg.display.showButtons ? '' : 'none';
+    panel.style.top = cfg.display.showButtons ? '50px' : '10px';
+    panel.style.maxHeight = cfg.display.showButtons ? 'calc(100vh - 60px)' : 'calc(100vh - 20px)';
+  }
+
+  function commit(path, raw) {
+    const spec = SPEC.get(path);
+    const value = coerce(spec, raw);
+    if (value === undefined) return false;
+    visitOnly.delete(path);
+    if (path === 'fish.population') {
+      cfg.fish.population = value;
+      cfg.fish.speciesDistribution = clone(mix);
+      settleFish(cfg);
+      for (const key of SPECIES_KEYS) paint('fish.speciesDistribution.' + key);
+      paint('fish.population');
+    } else if (path.startsWith('fish.speciesDistribution.')) {
+      const key = path.slice('fish.speciesDistribution.'.length);
+      mix[key] = value;
+      cfg.fish.speciesDistribution[key] = value;
+      cfg.fish.population = Object.values(cfg.fish.speciesDistribution).reduce((a, b) => a + b, 0);
+      paint(path);
+      paint('fish.population');
+    } else {
+      setPath(cfg, path, value);
+      paint(path);
+    }
+    refreshLocks();
+    paintSound();
+    applyChrome();
+    remember();
+    onChange(path);
+    return true;
+  }
+
+  function setDisclosure(item, open) {
+    item.querySelector(':scope > button').setAttribute('aria-expanded', String(open));
+    item.querySelector(':scope > div').hidden = !open;
+  }
+  function addDisclosure(parent, title, kind) {
+    const item = document.createElement('div');
+    item.className = kind;
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = kind + '-toggle';
+    button.textContent = title;
+    button.setAttribute('aria-expanded', 'false');
+    const body = document.createElement('div');
+    body.className = kind + '-body';
+    body.hidden = true;
+    item.append(button, body);
+    parent.appendChild(item);
+    button.addEventListener('click', () => {
+      const willOpen = button.getAttribute('aria-expanded') !== 'true';
+      for (const sibling of parent.children) {
+        if (sibling.classList.contains(kind)) setDisclosure(sibling, sibling === item && willOpen);
+      }
+    });
+    return body;
+  }
+  function addSlider(parent, path, label, min, max, step) {
+    const row = document.createElement('label');
+    const name = document.createElement('span'); name.textContent = label;
+    const val = document.createElement('output');
+    const inp = document.createElement('input');
+    Object.assign(inp, { type: 'range', min, max, step, value: getPath(cfg, path) });
+    val.textContent = inp.value;
+    inp.addEventListener('input', () => commit(path, Number(inp.value)));
+    row.append(name, inp, val);
+    parent.appendChild(row);
+    controls.set(path, { input: inp, output: val, row, kind: 'number' });
+  }
+  function addToggle(parent, path, label, onText, offText) {
+    const row = document.createElement('label');
+    row.className = 'toggle';
+    const name = document.createElement('span'); name.textContent = label;
+    const val = document.createElement('output');
+    const inp = document.createElement('input');
+    inp.type = 'checkbox';
+    inp.checked = getPath(cfg, path);
+    val.textContent = inp.checked ? onText : offText;
+    inp.addEventListener('change', () => commit(path, inp.checked));
+    const choice = document.createElement('span');
+    choice.className = 'choice';
+    choice.append(inp, val);
+    row.append(name, choice);
+    parent.appendChild(row);
+    controls.set(path, { input: inp, output: val, row, kind: 'bool', onText, offText });
+  }
+  function addColor(parent, path, label) {
+    const row = document.createElement('label');
+    row.className = 'color';
+    const name = document.createElement('span'); name.textContent = label;
+    const inp = document.createElement('input');
+    inp.type = 'color';
+    inp.value = getPath(cfg, path);
+    inp.addEventListener('input', () => commit(path, inp.value));
+    row.append(name, inp);
+    parent.appendChild(row);
+    controls.set(path, { input: inp, row, kind: 'color' });
+  }
+  function addSetting(host, setting) {
+    if (setting[2] === 'toggle') addToggle(host, setting[0], setting[1], setting[3], setting[4]);
+    else if (setting[2] === 'color') addColor(host, setting[0], setting[1]);
+    else addSlider(host, ...setting);
+  }
+  function addGroups(parent, groups, kind) {
+    let first = null;
+    for (const group of groups || []) {
+      const host = group.title ? addDisclosure(parent, group.title, kind) : parent;
+      if (group.title && !first) first = host;
+      for (const setting of group.settings || []) addSetting(host, setting);
+      addGroups(host, group.groups, 'subgroup');
+    }
+    if (first) setDisclosure(first.parentElement, true);
+  }
+  function addShortcuts(parent) {
+    const wrap = document.createElement('div');
+    wrap.className = 'shortcuts';
+    const heading = document.createElement('h3');
+    heading.textContent = 'Shortcuts';
+    const list = document.createElement('dl');
+    for (const [key, action] of [
+      ['F1', 'Show settings'],
+      ['Esc', 'Close settings'],
+      ['H', 'Show or hide settings'],
+      ['M', 'Turn sound on or off'],
+    ]) {
+      const term = document.createElement('dt'); term.textContent = key;
+      const detail = document.createElement('dd'); detail.textContent = action;
+      list.append(term, detail);
+    }
+    wrap.append(heading, list);
+    parent.appendChild(wrap);
+  }
+
+  const sectionBodies = [];
+  for (const section of SECTIONS) {
+    const body = addDisclosure(panelBody, section.title, 'section');
+    sectionBodies.push(body);
+    addGroups(body, section.groups, 'group');
+    if (section.title === 'General') addShortcuts(body);
+  }
+  setDisclosure(sectionBodies[0].parentElement, true);
+
+  const io = document.createElement('div');
+  io.className = 'io';
+  const exportBtn = button('Export');
+  const importBtn = button('Import');
+  const shareBtn = button('Share link');
+  const resetBtn = button('Reset to defaults');
+  shareUrlInput = document.createElement('input');
+  shareUrlInput.type = 'text';
+  shareUrlInput.className = 'share-url';
+  shareUrlInput.readOnly = true;
+  shareUrlInput.hidden = true;
+  shareUrlInput.spellcheck = false;
+  shareUrlInput.setAttribute('aria-label', 'Share URL');
+  const fileInput = document.createElement('input');
+  fileInput.type = 'file';
+  fileInput.accept = 'application/json,.json';
+  fileInput.hidden = true;
+  io.append(exportBtn, importBtn, shareBtn, resetBtn, shareUrlInput, fileInput);
+  const status = document.createElement('div');
+  status.className = 'status';
+  status.setAttribute('role', 'status');
+  panelBody.append(io, status);
+
+  let statusToken = 0;
+  function note(text) {
+    status.textContent = text;
+    const token = ++statusToken;
+    setTimeout(() => { if (token === statusToken) status.textContent = ''; }, 4000);
+  }
+  function button(text) {
+    const el = document.createElement('button');
+    el.type = 'button';
+    el.textContent = text;
+    return el;
+  }
+  function exportSettings() {
+    const exported = {};
+    for (const path of SPEC.keys()) setPath(exported, path, getPath(cfg, path));
+    const blob = new Blob([JSON.stringify(exported, null, 2) + '\n'], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'aquarium-settings.json';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1500);
+    note('Exported settings');
+  }
+  function importSettings(data) {
+    if (!data || typeof data !== 'object' || Array.isArray(data)) { note('Settings file must be a JSON object'); return; }
+    let count = 0;
+    const fish = [];
+    for (const path of SPEC.keys()) {
+      const raw = Object.hasOwn(data, path) ? data[path] : hasPath(data, path) ? getPath(data, path) : undefined;
+      if (raw === undefined) continue;
+      const value = coerce(SPEC.get(path), raw);
+      if (value === undefined) continue;
+      visitOnly.delete(path);
+      setPath(cfg, path, value);
+      count++;
+      if (path.startsWith('fish.')) fish.push(path);
+    }
+    mix = clone(cfg.fish.speciesDistribution);
+    settleFish(cfg);
+    for (const path of SPEC.keys()) paint(path);
+    refreshLocks();
+    paintSound();
+    applyChrome();
+    remember();
+    for (const path of SPEC.keys()) if (!path.startsWith('fish.')) onChange(path);
+    if (fish.length) onChange('fish.population');
+    note(count ? `Imported ${count} setting${count === 1 ? '' : 's'}` : 'No recognized settings');
+  }
+  function resetAll() {
+    for (const path of SPEC.keys()) {
+      visitOnly.delete(path);
+      setPath(cfg, path, getPath(DEFAULT_CONFIG, path));
+    }
+    mix = clone(cfg.fish.speciesDistribution);
+    for (const path of SPEC.keys()) paint(path);
+    refreshLocks();
+    paintSound();
+    applyChrome();
+    remember();
+    for (const path of SPEC.keys()) onChange(path);
+    note('Reset to defaults');
+  }
+
+  exportBtn.addEventListener('click', exportSettings);
+  importBtn.addEventListener('click', () => fileInput.click());
+  shareBtn.addEventListener('click', async () => {
+    shareUrlInput.hidden = false;
+    shareUrlInput.value = shareUrl();
+    shareUrlInput.focus();
+    shareUrlInput.select();
+    try { await navigator.clipboard.writeText(shareUrlInput.value); note('Share link copied'); }
+    catch { note('Share link selected'); }
+  });
+  shareUrlInput.addEventListener('focus', () => shareUrlInput.select());
+  resetBtn.addEventListener('click', resetAll);
+  fileInput.addEventListener('change', async () => {
+    const file = fileInput.files && fileInput.files[0];
+    if (!file) return;
+    try { importSettings(JSON.parse(await file.text())); }
+    catch { note('Could not read that settings file'); }
+    finally { fileInput.value = ''; }
+  });
+
+  document.getElementById('sound').addEventListener('click', (event) => {
+    event.stopPropagation();
+    commit('audio.enabled', !cfg.audio.enabled);
+  });
+  addEventListener('keydown', (event) => {
+    if (event.repeat) return;
+    const field = event.target instanceof Element && event.target.closest('input, textarea, select');
+    if (event.code === 'Escape') setPanelOpen(false);
+    if (event.code === 'F1') { event.preventDefault(); setPanelOpen(true); }
+    if (field || event.ctrlKey || event.metaKey || event.altKey) return;
+    if (event.code === 'KeyH') togglePanel();
+    if (event.code === 'KeyM') commit('audio.enabled', !cfg.audio.enabled);
+  });
+
+  refreshLocks();
+  paintSound();
+  applyChrome();
+  return { note };
 }
 
 // ---- js/main.js ----
@@ -4314,10 +4952,11 @@ function createAquariumAudio(volume = 0.35) {
 
 
 
+
 const qs = new URLSearchParams(location.search);
 const SHOT = qs.get('shot');
 const SHOT_FRAMES = Number(qs.get('frames')) || 240;
-const INFO = qs.get('info') === '1';
+const FISH_CAP = 80;
 const VIEW = qs.get('view') || '';
 const BU = GPUBufferUsage, TU = GPUTextureUsage, SS = GPUShaderStage;
 const MSAA = 4;
@@ -4344,7 +4983,7 @@ window.addEventListener('unhandledrejection', (e) => log('rejection: ' + (e.reas
 const linearColor = (hex) => hexToRgb(hex).map(srgbToLinear);
 
 async function main() {
-  const cfg = loadConfig();
+  const { cfg, visitOnly } = prepareConfig();
   if (!navigator.gpu) fail('WebGPU is not available in this browser.');
   const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
   if (!adapter) fail('No WebGPU adapter found.');
@@ -4458,12 +5097,10 @@ async function main() {
   const SCALE_FREQ = { clownfish: 70, blueTang: 110, yellowTang: 120, emperorAngelfish: 80, butterflyfish: 75, royalGramma: 70, moorishIdol: 110, lionfish: 90, damselfish: 60, anthias: 55, triggerfish: 40, morayEel: 0 };
   const STYLE = { 0: 0, 1: 1, 2: 2, 3: 3, 4: 4 };
   const fishSlots = {};
-  const lineupCount = VIEW === 'lineup' ? 1 : 0;
   const models = cfg.assets && cfg.assets.models || {};
   for (const key of SPECIES_KEYS) {
     const def = SPECIES[key];
-    const count = (distribution[key] || 0) + lineupCount;
-    if (!count) continue;
+    const count = FISH_CAP;
     let mesh = null, image = null;
     const spec = models[key];
     if (spec) {
@@ -4509,7 +5146,7 @@ async function main() {
     const c = qs.get('cam').split(',').map(Number);
     camBase.eye = c.slice(0, 3); camBase.target = c.slice(3, 6);
   }
-  const fov = (cfg.camera.fovDegrees || 32) * Math.PI / 180;
+  let fov = (cfg.camera.fovDegrees || 32) * Math.PI / 180;
   const eye = camBase.eye.slice(), target = camBase.target.slice();
   const view = new Float32Array(16), proj = new Float32Array(16), viewProj = new Float32Array(16), invViewProj = new Float32Array(16);
   const L = [0.22, 1, 0.3];
@@ -4545,7 +5182,7 @@ async function main() {
   };
   updateCamera(0, 16 / 9);
 
-  const sim = new Aquarium(reef, cfg, cfg.seed + 7, visible);
+  let sim = new Aquarium(reef, cfg, cfg.seed + 7, visible);
   if (VIEW !== 'lineup') sim.spawn(distribution);
   log(`fish: ${sim.fish.length}`);
 
@@ -4662,9 +5299,14 @@ async function main() {
   const shadowBG = device.createBindGroup({ layout: shadowFrameBGL, entries: [{ binding: 0, resource: { buffer: frameUB } }] });
 
   const env = cfg.environment;
-  const deep = linearColor(env.waterColor).map((c) => c * 0.32);
-  const shallow = linearColor(env.waterColor).map((c, i) => c * 1.05 + [0.02, 0.07, 0.07][i]);
-  const bubbleSources = cfg.effects.bubblesEnabled && VIEW !== 'lineup' ? reef.bubbleSources.slice(0, 6) : [];
+  let deep = [0, 0, 0], shallow = [0, 0, 0];
+  function refreshWater() {
+    const tint = linearColor(env.waterColor);
+    deep = tint.map((c) => c * 0.32);
+    shallow = tint.map((c, i) => c * 1.05 + [0.02, 0.07, 0.07][i]);
+  }
+  refreshWater();
+  const bubbleSources = () => (cfg.effects.bubblesEnabled && VIEW !== 'lineup' ? reef.bubbleSources.slice(0, 6) : []);
   const drift = [0, 0, 0];
   const current = { x: 0, y: 0, z: 0 };
   let shaderTime = 0;
@@ -4680,7 +5322,7 @@ async function main() {
     f[72] = W; f[73] = H; f[74] = 1 / H; f[75] = proj[5];
     f[76] = drift[0]; f[77] = drift[1]; f[78] = drift[2]; f[79] = 0;
     for (let i = 0; i < 6; i++) {
-      const s = bubbleSources[i];
+      const s = bubbleSources()[i];
       f[80 + i * 4] = s ? s[0] : 0; f[81 + i * 4] = s ? s[1] : 0; f[82 + i * 4] = s ? s[2] : 0; f[83 + i * 4] = s ? 1 : 0;
     }
     device.queue.writeBuffer(frameUB, 0, f);
@@ -4806,11 +5448,9 @@ async function main() {
   // Frame loop
   // ------------------------------------------------------------------------------------
   const hud = document.getElementById('hud');
-  if (INFO) hud.style.display = 'block';
-  const audio = cfg.audio.enabled ? createAquariumAudio(cfg.audio.volume) : null;
+  let audio = cfg.audio.enabled ? createAquariumAudio(cfg.audio.volume) : null;
   let time = Number(qs.get('t')) || 0, last = performance.now(), lastShown = 0, frameNo = 0, fade = SHOT ? 1 : 0;
   let shooting = false, hudTimer = 0, hudFrames = 0, cpuMs = 0, nextDue = 0;
-  const speed = cfg.fish.speedMultiplier;
   const curVec = { x: 0, y: 0, z: 0 };
   const passes = {
     shadow: { colorAttachments: [], depthStencilAttachment: { view: dynShadow.createView(), depthLoadOp: 'load', depthStoreOp: 'store' } },
@@ -4847,7 +5487,7 @@ async function main() {
     const cpu0 = performance.now();
     if (VIEW === 'lineup') writeLineup(time);
     else {
-      const sdt = dt * speed;
+      const sdt = dt * cfg.fish.speedMultiplier;
       const steps = Math.min(4, Math.ceil(sdt / (1 / 45)));
       for (let i = 0; i < steps; i++) sim.update(sdt / steps, time - sdt + (sdt * (i + 1)) / steps, curVec);
       sim.writeInstances(fishSlots);
@@ -4904,7 +5544,7 @@ async function main() {
       }
       pass.setPipeline(bgPipe);
       pass.draw(3);
-      if (bubbleSources.length) { pass.setPipeline(bubblePipe); pass.draw(6, 6 * BUBBLES_PER_SOURCE); }
+      if (bubbleSources().length) { pass.setPipeline(bubblePipe); pass.draw(6, 6 * BUBBLES_PER_SOURCE); }
       if (cfg.effects.particlesEnabled) { pass.setPipeline(particlePipe); pass.draw(6, cfg.effects.particleCount); }
       pass.end();
     }
@@ -4942,7 +5582,7 @@ async function main() {
     device.queue.submit([enc.finish()]);
     if (readBuf) saveShot(readBuf, bpr);
 
-    if (INFO) {
+    if (cfg.display.showInfo) {
       hudFrames++;
       hudTimer += dt;
       if (hudTimer > 0.5) {
@@ -4978,7 +5618,9 @@ async function main() {
   }
 
   // presentation: fullscreen on the first interaction, cursor hidden while idle
-  const goFullscreen = () => {
+  const goFullscreen = (event) => {
+    const target = event && event.target;
+    if (target instanceof Element && target.closest('#toolbar, #panel')) return;
     if (cfg.display.fullscreen && !document.fullscreenElement && document.documentElement.requestFullscreen) {
       document.documentElement.requestFullscreen().catch(() => {});
     }
@@ -4986,6 +5628,37 @@ async function main() {
   };
   window.addEventListener('pointerdown', goFullscreen);
   window.addEventListener('keydown', goFullscreen);
+
+  let restockTimer = 0;
+  function restock() {
+    if (VIEW === 'lineup') return;
+    const dist = resolvePopulation(cfg);
+    for (const key of SPECIES_KEYS) dist[key] = Math.min(FISH_CAP, dist[key] || 0);
+    sim = new Aquarium(reef, cfg, cfg.seed + 7, visible);
+    sim.spawn(dist);
+  }
+  function applyAudio() {
+    if (!audio && cfg.audio.enabled) audio = createAquariumAudio(cfg.audio.volume);
+    if (!audio) return;
+    audio.setVolume(cfg.audio.volume);
+    audio.setEnabled(cfg.audio.enabled);
+  }
+  createSettings(cfg, visitOnly, (path) => {
+    if (path === 'environment.waterColor') refreshWater();
+    if (path === 'camera.fovDegrees') fov = cfg.camera.fovDegrees * Math.PI / 180;
+    if (path === 'display.targetFps') { fpsTarget = cfg.display.targetFps; nextDue = 0; }
+    if (path === 'display.maxRenderScale' || path === 'display.minRenderScale') {
+      renderScale = Math.min(cfg.display.maxRenderScale, Math.max(cfg.display.minRenderScale, renderScale));
+      if (path === 'display.maxRenderScale') renderScale = cfg.display.maxRenderScale;
+      resize();
+    }
+    if (path === 'display.fullscreen' && !cfg.display.fullscreen && document.fullscreenElement) document.exitFullscreen().catch(() => {});
+    if (path.startsWith('audio.')) applyAudio();
+    if (path.startsWith('fish.') && VIEW !== 'lineup') {
+      clearTimeout(restockTimer);
+      restockTimer = setTimeout(restock, 200);
+    }
+  });
   let idleTimer = 0;
   window.addEventListener('pointermove', () => {
     document.body.classList.remove('idle');

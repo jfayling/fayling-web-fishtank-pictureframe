@@ -6,7 +6,8 @@ export function createAquariumAudio(volume = 0.35) {
   if (!Ctx) return null;
   const ac = new Ctx();
   const master = ac.createGain();
-  master.gain.value = volume;
+  let level = volume;
+  master.gain.value = level;
   master.connect(ac.destination);
 
   // two seconds of brown noise, looped
@@ -42,8 +43,10 @@ export function createAquariumAudio(volume = 0.35) {
   }
   return {
     resume() { if (ac.state !== 'running') ac.resume(); },
+    setVolume(v) { level = v; master.gain.value = v; },
+    setEnabled(on) { master.gain.value = on ? level : 0; if (on) this.resume(); },
     update(dt) {
-      if (ac.state !== 'running') return;
+      if (ac.state !== 'running' || master.gain.value === 0) return;
       humGain.gain.value = 0.45 + 0.08 * Math.sin(ac.currentTime * 0.07);
       nextBlip -= dt;
       if (nextBlip <= 0) {

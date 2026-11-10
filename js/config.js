@@ -9,6 +9,8 @@ export const DEFAULT_CONFIG = {
     height: 0,
     targetFps: 60,
     fullscreen: true,      // request fullscreen on the first click or key press
+    showButtons: true,     // the settings toolbar; hidden while it stays idle-dim
+    showInfo: false,       // frame-rate readout; also forced on for one visit by ?info=1
     adaptive: true,        // lower render scale, then drop to 30 FPS, when frames run long
     maxRenderScale: 1,     // fraction of the device pixel size to render at
     minRenderScale: 0.5,
@@ -74,7 +76,7 @@ export const DEFAULT_CONFIG = {
   seed: 20261110,
 };
 
-function deepMerge(base, over) {
+export function deepMerge(base, over) {
   for (const k of Object.keys(over || {})) {
     const v = over[k];
     if (v && typeof v === 'object' && !Array.isArray(v) && base[k] && typeof base[k] === 'object') deepMerge(base[k], v);

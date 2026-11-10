@@ -35,6 +35,12 @@ Any key can be overridden from the URL, for example
 JSON document can be passed as `?config=<base64url JSON>`. The population is distributed
 across species in proportion to `speciesDistribution` (at most one moray).
 
+The on-screen settings panel follows the ocean picture frame: a dim **Settings** button
+(F1 or H), sections for the tank, fish, effects, camera and sound, and Export, Import,
+Share link and Reset. Changes apply immediately and are remembered in this browser. Sound
+toggles with the toolbar button or M, and Esc closes the panel. `?info=1` shows the
+frame-rate readout for that visit.
+
 Development options: `?info=1` (frame-rate readout), `?view=lineup` (every species side by
 side), `?cam=x,y,z,tx,ty,tz` (camera override), `?t=seconds`, `?w=&h=` (forced size).
 
