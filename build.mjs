@@ -4,6 +4,7 @@
 //   aquarium.min.html  minified bundle (WGSL comments/whitespace stripped; JS minified with
 //                      esbuild when it can be found, otherwise comments/indentation stripped)
 //   node build.mjs
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -25,9 +26,23 @@ const write = (name, html) => {
   console.log(`wrote ${name}`, (html.length / 1024).toFixed(0) + ' KB');
 };
 
+// The readable bundle shares one module scope. A second top-level `function` or `const`
+// with the same name is a syntax error in the page, and the dev server never sees it.
+function assertModuleParses(source) {
+  const file = path.join(os.tmpdir(), 'fishtank-bundle-check.mjs');
+  fs.writeFileSync(file, source);
+  const result = spawnSync(process.execPath, ['--check', file], { encoding: 'utf8' });
+  fs.unlinkSync(file);
+  if (result.status !== 0) {
+    console.error(result.stderr);
+    throw new Error('bundle has a syntax error (often a top-level name declared in two modules)');
+  }
+}
+
 // ---- readable bundle --------------------------------------------------------------------
 let code = '';
 for (const f of order) code += `// ---- ${f} ----\n${stripModuleSyntax(fs.readFileSync(path.join(root, f), 'utf8'))}\n`;
+assertModuleParses(code);
 write('aquarium.html', page.replace(SCRIPT_TAG, () => `<script type="module">\n${code}\n</script>`));
 
 // ---- minified bundle --------------------------------------------------------------------

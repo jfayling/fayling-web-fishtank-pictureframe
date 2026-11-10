@@ -85,7 +85,7 @@ export function deepMerge(base, over) {
   return base;
 }
 
-function coerce(old, s) {
+function coerceQueryValue(old, s) {
   if (typeof old === 'number') { const n = Number(s); return Number.isFinite(n) ? n : old; }
   if (typeof old === 'boolean') return s === '1' || s === 'true' || s === 'on';
   return s;
@@ -108,7 +108,7 @@ export function loadConfig(search = location.search) {
     for (let i = 0; i < path.length - 1 && o; i++) o = o[path[i]];
     if (!o || typeof o !== 'object') continue;
     const leaf = path[path.length - 1];
-    o[leaf] = leaf in o ? coerce(o[leaf], value) : (Number.isFinite(Number(value)) ? Number(value) : value);
+    o[leaf] = leaf in o ? coerceQueryValue(o[leaf], value) : (Number.isFinite(Number(value)) ? Number(value) : value);
   }
   return cfg;
 }
