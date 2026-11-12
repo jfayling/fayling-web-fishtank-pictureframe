@@ -8,7 +8,8 @@
   html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
   canvas { display: block; width: 100vw; height: 100vh; }
   body.idle, body.idle canvas { cursor: none; }
-  body.idle #toolbar, body.idle #toolbar *, body.idle #panel, body.idle #panel * { cursor: auto; }
+  body.idle #toolbar, body.idle #toolbar *, body.idle #panel, body.idle #panel *,
+  body.idle #weather-widget .weather-place, body.idle .place-dialog, body.idle .place-dialog * { cursor: auto; }
   #hud { display: none; position: fixed; left: 12px; top: 10px; z-index: 1; font: 12px/1.4 ui-monospace, Consolas, monospace; color: #cfe; text-shadow: 0 0 3px #000; pointer-events: none; }
   #toolbar { position: fixed; top: 10px; right: 12px; z-index: 2; display: flex; gap: 8px; }
   #toolbar button { padding: 6px 12px; border: 1px solid #e5e1d822; border-radius: 8px; background: #0b0f1488;
@@ -31,22 +32,58 @@
   #close-settings:hover { background: #18222ce6; }
   #close-settings:focus-visible { outline: 2px solid #e2a04e; outline-offset: 2px; }
   #panel-body { overflow: auto; min-height: 0; padding: 8px 12px 10px; }
-  #panel .section-toggle, #panel .group-toggle { display: flex; width: 100%; align-items: center; gap: 8px;
+  #panel .section-toggle, #panel .group-toggle, #panel .subgroup-toggle { display: flex; width: 100%; align-items: center; gap: 8px;
               padding: 0; border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; }
   #panel .section-toggle { margin: 10px 0 0; padding-top: 8px; border-top: 1px solid #e5e1d822;
                            font: 650 12px/1.2 system-ui, sans-serif; letter-spacing: .06em; text-transform: uppercase; }
   #panel .section:first-child .section-toggle { margin-top: 0; padding-top: 0; border-top: 0; }
-  #panel .group-toggle { margin: 7px 0 0; font: 600 11px/1.2 system-ui, sans-serif; letter-spacing: .04em;
+  #panel .group-toggle, #panel .subgroup-toggle { margin: 7px 0 0; font: 600 11px/1.2 system-ui, sans-serif; letter-spacing: .04em;
                          text-transform: uppercase; opacity: .72; }
-  #panel .section-toggle::before, #panel .group-toggle::before { content: ''; flex: 0 0 auto; width: 0; height: 0;
+  #panel .subgroup-toggle { font-size: 10.5px; opacity: .64; }
+  #panel .section-toggle::before, #panel .group-toggle::before, #panel .subgroup-toggle::before { content: ''; flex: 0 0 auto; width: 0; height: 0;
               border-left: 4px solid transparent; border-right: 4px solid transparent; border-top: 5px solid currentColor;
               transform: rotate(-90deg); }
-  #panel .section-toggle[aria-expanded="true"]::before, #panel .group-toggle[aria-expanded="true"]::before { transform: none; }
-  #panel .section-toggle:hover, #panel .group-toggle:hover { color: #fff; }
-  #panel .section-toggle:focus-visible, #panel .group-toggle:focus-visible { outline: 2px solid #e2a04e; outline-offset: 2px; }
+  #panel .section-toggle[aria-expanded="true"]::before, #panel .group-toggle[aria-expanded="true"]::before,
+  #panel .subgroup-toggle[aria-expanded="true"]::before { transform: none; }
+  #panel .section-toggle:hover, #panel .group-toggle:hover, #panel .subgroup-toggle:hover { color: #fff; }
+  #panel .section-toggle:focus-visible, #panel .group-toggle:focus-visible, #panel .subgroup-toggle:focus-visible { outline: 2px solid #e2a04e; outline-offset: 2px; }
   #panel .section-body { padding: 4px 0 2px; }
   #panel .group-body { margin-left: 14px; }
+  #panel .subgroup-body { margin-left: 12px; }
   #panel label { display: grid; grid-template-columns: 1fr 110px 72px; gap: 6px; align-items: center; margin: 3px 0; }
+  #panel label.select, #panel label.color { grid-template-columns: 1fr auto; }
+  #panel select { width: 156px; padding: 3px 5px; border: 1px solid #e5e1d833; border-radius: 5px;
+                  background: #18222c; color: inherit; font: inherit; }
+  #panel .place { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 6px; align-items: center; margin: 3px 0; }
+  #panel .place.disabled { opacity: .38; }
+  #panel .place-value { overflow: hidden; text-align: right; text-overflow: ellipsis; white-space: nowrap; opacity: .9; }
+  #panel .place-pick { width: 28px; height: 22px; padding: 0; border: 1px solid #e5e1d855; border-radius: 5px;
+                       background: #18222c; color: inherit; font: 14px/1 system-ui, sans-serif; letter-spacing: .04em; cursor: pointer; }
+  #panel .place-pick:hover { background: #243140; }
+  #panel .place-pick:focus-visible { outline: 2px solid #e2a04e; outline-offset: 1px; }
+  .place-dialog[hidden] { display: none; }
+  .place-dialog { position: fixed; inset: 0; z-index: 6; display: grid; place-items: center; background: #0008; }
+  .place-dialog .sheet { width: min(360px, calc(100vw - 32px)); max-height: min(520px, calc(100vh - 48px));
+                         display: flex; flex-direction: column; padding: 12px; border: 1px solid #e5e1d833; border-radius: 10px;
+                         background: #0b0f14f2; color: #e5e1d8; font: 13px/1.35 system-ui, sans-serif;
+                         box-shadow: 0 12px 40px #000a; }
+  .place-dialog h2 { margin: 0 0 8px; font: 650 12px/1.2 system-ui, sans-serif; letter-spacing: .06em; text-transform: uppercase; }
+  .place-dialog input { box-sizing: border-box; width: 100%; padding: 7px 8px; border: 1px solid #e5e1d833; border-radius: 6px;
+                        background: #18222c; color: inherit; color-scheme: dark; font: inherit; }
+  .place-dialog input:focus-visible { outline: 2px solid #e2a04e; outline-offset: 1px; }
+  .place-dialog .choices { flex: 1 1 auto; min-height: 0; max-height: min(280px, 42vh); margin: 8px 0; overflow: auto;
+                           display: flex; flex-direction: column; gap: 4px; }
+  .place-dialog .place-choice { padding: 8px 10px; border: 1px solid #e5e1d822; border-radius: 6px; background: #18222c;
+                                color: inherit; font: inherit; text-align: left; cursor: pointer; }
+  .place-dialog .place-choice:hover, .place-dialog .place-choice[aria-selected="true"] { border-color: #e2a04eaa; background: #243140; }
+  .place-dialog .place-choice:focus-visible { outline: 2px solid #e2a04e; outline-offset: 1px; }
+  .place-dialog .search { display: flex; flex-direction: column; min-height: 0; }
+  .place-dialog .hint { min-height: 1.3em; margin: 0; opacity: .7; }
+  .place-dialog .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
+  .place-dialog .actions button { padding: 5px 10px; border: 1px solid #e5e1d855; border-radius: 6px;
+                                  background: #18222ccc; color: inherit; font: inherit; cursor: pointer; }
+  .place-dialog .actions button:hover { background: #243140; }
+  .place-dialog .actions button:focus-visible { outline: 2px solid #e2a04e; outline-offset: 1px; }
   #panel label.disabled { opacity: .38; }
   #panel input[type="range"] { width: 110px; accent-color: #e2a04e; }
   #panel label.color { grid-template-columns: 1fr auto; }
@@ -73,6 +110,68 @@
   #panel .shortcuts dl { display: grid; grid-template-columns: auto 1fr; gap: 3px 10px; margin: 0; }
   #panel .shortcuts dt { color: #f0e6d4; }
   #panel .shortcuts dd { margin: 0; opacity: .8; }
+  #clock-widget { position: fixed; z-index: 1; display: flex; flex-direction: column; align-items: center;
+                  padding: .16em .3em; border-radius: .16em; pointer-events: none; user-select: none;
+                  font-variant-numeric: tabular-nums; line-height: 1; white-space: nowrap; }
+  #clock-widget[hidden] { display: none; }
+  #clock-widget .clock-date { margin-top: .28em; font-size: .28em; letter-spacing: .08em; text-transform: uppercase; }
+  #clock-widget[data-style="modern"] { font-family: system-ui, sans-serif; font-weight: 250; letter-spacing: -.04em; }
+  #clock-widget[data-style="mono"] { font-family: ui-monospace, Consolas, monospace; font-weight: 400; letter-spacing: .02em; }
+  #clock-widget[data-style="classic"] { font-family: Georgia, "Times New Roman", serif; font-weight: 400; letter-spacing: .01em; }
+  #weather-widget { position: fixed; z-index: 1; width: min(310px, calc(100vw - 32px)); color: #f7fbff;
+                    font: 14px/1.2 system-ui, sans-serif; pointer-events: none; user-select: none;
+                    filter: drop-shadow(0 2px 8px #0008); }
+  #weather-widget[hidden] { display: none; }
+  #weather-widget[data-position="top-left"] { top: 16px; left: 16px; }
+  #weather-widget[data-position="top-right"] { top: 54px; right: 16px; }
+  #weather-widget[data-position="bottom-left"] { bottom: 16px; left: 16px; }
+  #weather-widget[data-position="bottom-right"] { right: 16px; bottom: 16px; }
+  .weather-card { overflow: hidden; border: 1px solid #dcecff2e; border-radius: 15px;
+                  background: linear-gradient(145deg, #101a26c9, #09121baf); backdrop-filter: blur(12px) saturate(1.2); }
+  .weather-main { display: grid; grid-template-columns: 64px 1fr auto; gap: 10px; align-items: center; padding: 12px 14px; }
+  .weather-icon { width: 58px; height: 58px; color: #f9d978; }
+  .weather-icon svg { width: 100%; height: 100%; overflow: visible; }
+  .weather-place { display: block; width: 100%; overflow: hidden; padding: 0; border: 0; background: none; color: inherit;
+                   font: inherit; font-size: 11px; letter-spacing: .07em; text-align: left; text-transform: uppercase;
+                   text-overflow: ellipsis; white-space: nowrap; opacity: .7; pointer-events: auto; cursor: pointer; }
+  .weather-place:hover { opacity: 1; text-decoration: underline; text-underline-offset: 2px; }
+  .weather-place:focus-visible { opacity: 1; outline: 2px solid #e2a04e; outline-offset: 2px; }
+  .weather-condition { margin-top: 3px; font-size: 16px; font-weight: 600; }
+  .weather-temp-block { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
+  .weather-temp { font-size: 39px; font-weight: 250; letter-spacing: -.07em; line-height: .9; white-space: nowrap; }
+  .weather-range { display: flex; gap: 8px; font-size: 12px; font-weight: 600; letter-spacing: .01em; white-space: nowrap; }
+  .weather-range span:first-child { color: #ffd4a8; }
+  .weather-range span:last-child { color: #c9e6ff; }
+  .weather-details { display: flex; flex-wrap: wrap; gap: 7px 14px; padding: 9px 14px 11px;
+                     border-top: 1px solid #dcecff1b; color: #eef7ffdc; font-size: 12px; }
+  .weather-detail { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+  .weather-detail svg { width: 15px; height: 15px; opacity: .82; }
+  .weather-forecast { display: grid; grid-template-columns: repeat(3, 1fr); border-top: 1px solid #dcecff1b; }
+  .weather-hour { padding: 8px 5px 9px; text-align: center; }
+  .weather-hour + .weather-hour { border-left: 1px solid #dcecff16; }
+  .weather-hour time { display: block; font-size: 10px; opacity: .62; }
+  .weather-hour strong { display: block; margin-top: 2px; font-size: 15px; font-weight: 600; letter-spacing: -.02em; }
+  .weather-hour-rain { display: block; margin-top: 2px; font-size: 11px; font-weight: 500; opacity: .72; }
+  .weather-updated { display: block; padding: 0 14px 8px; font-size: 10px; letter-spacing: .03em;
+                     text-align: right; opacity: .5; }
+  .weather-alert { display: grid; grid-template-columns: 26px 1fr; gap: 8px; align-items: center;
+                   margin-bottom: 8px; padding: 9px 12px; border: 1px solid #ffc04b99; border-radius: 12px;
+                   background: #7a3700e8; color: #fff8e7; box-shadow: 0 0 22px #ff8a0033; }
+  .weather-alert[data-severity="Extreme"], .weather-alert[data-severity="Severe"] {
+                   border-color: #ff766f; background: #7d1018ed; box-shadow: 0 0 25px #ff203f55; }
+  .weather-alert-icon { width: 25px; height: 25px; }
+  .weather-alert > div { min-width: 0; }
+  .weather-alert strong { display: block; overflow: hidden; font-size: 12px; letter-spacing: .05em;
+                          text-overflow: ellipsis; text-transform: uppercase; white-space: nowrap; }
+  .weather-alert-scroll { height: calc(1.35em * 3); margin-top: 3px; overflow: hidden;
+                          font-size: 11px; line-height: 1.35; opacity: .92; }
+  .weather-alert-scroll p { margin: 0; padding-bottom: 1.35em; white-space: pre-line; overflow-wrap: anywhere; }
+  .weather-alert-scroll.scrolling .weather-alert-track { animation: weather-alert-marquee linear infinite; }
+  @keyframes weather-alert-marquee {
+    from { transform: translateY(0); }
+    to { transform: translateY(-50%); }
+  }
+  .weather-error { padding: 11px 14px; font-size: 12px; opacity: .72; }
   #err { display: none; position: fixed; inset: 0; z-index: 5; align-items: center; justify-content: center; padding: 2em; color: #9ab; font: 18px/1.5 system-ui, sans-serif; text-align: center; background: #021018; white-space: pre-wrap; }
 </style>
 </head>
@@ -90,6 +189,11 @@
   </div>
   <div id="panel-body"></div>
 </div>
+<time id="clock-widget" aria-label="Current time">
+  <span class="clock-time"></span>
+  <span class="clock-date"></span>
+</time>
+<aside id="weather-widget" data-position="bottom-left" aria-label="Current weather" aria-live="polite" hidden></aside>
 <div id="err"></div>
 <script type="module">
 // ---- js/wgsl/common.js ----
@@ -1813,7 +1917,7 @@ const DEFAULT_CONFIG = {
   audio: {
     enabled: false,          // optional ambient aquarium sound; silent by default
     volume: 0.35,            // master level
-    hissEnabled: true,       // airstone / filter-return hiss
+    hissEnabled: false,      // airstone / filter-return hiss; off until turned on
     hissVolume: 1,           // 1 = the designed hiss level; can be pushed past 1
     hissTone: 0.5,           // 0 = darker, 1 = brighter air
     bubblesEnabled: true,    // surface bubble pops
@@ -1821,6 +1925,36 @@ const DEFAULT_CONFIG = {
     bubbleRate: 1,           // 0 = silent, 1 = a steady stream, higher = denser
     bubblePitch: 0.5,        // 0 = larger, lower pops; 1 = tiny high ticks
     bubblePlink: 0.35,       // how often a pop has a glassy ring
+  },
+
+  // Overlay widgets, matching fayling-web-ocean-pictureframe. The weather location is a
+  // city ("Lisbon, Portugal") or a 5-digit US ZIP code.
+  clock: {
+    enabled: true,
+    hour24: false,
+    seconds: false,
+    date: true,
+    style: 'modern',         // modern | mono | classic
+    size: 72,
+    color: '#ffffff',
+    position: 'top-center',  // top/bottom + left/center/right
+    opacity: 0.9,
+    background: 0.18,
+  },
+
+  weather: {
+    enabled: true,
+    location: '30265',
+    refresh: 15,             // minutes between forecasts
+    unit: 'fahrenheit',      // fahrenheit | celsius
+    position: 'bottom-left', // corner of the screen
+    temperature: true,
+    feels: true,
+    precipitation: true,
+    humidity: true,
+    wind: true,
+    forecast: true,
+    alerts: true,            // active U.S. National Weather Service alerts
   },
 
   assets: {
@@ -4326,7 +4460,7 @@ function fishMeshFromModel(model, def, opts = {}) {
 const DEFAULTS = {
   enabled: false,
   volume: 0.35,
-  hissEnabled: true,
+  hissEnabled: false,
   hissVolume: 1,
   hissTone: 0.5,
   bubblesEnabled: true,
@@ -4503,11 +4637,778 @@ function createAquariumAudio(initial = {}) {
   return api;
 }
 
+// ---- js/place.js ----
+const CACHE_KEY = 'fishtank-place-cache';
+const LEGACY_KEYS = ['web-ocean-weather-location', 'web-ocean-zip-location'];
+const LEGACY_LISTS = ['web-ocean-place-cache'];
+const PLACE_TEXT = /^-?[\p{L}\p{N}][\p{L}\p{N}\s.,'’-]*$/u;
+const memory = new Map();
+
+function fold(value) {
+  return value.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase().replace(/[.'’]/g, '');
+}
+
+function digits(length) {
+  return (value) => {
+    const numeric = value.replace(/\D/g, '');
+    return numeric.length === length ? numeric : '';
+  };
+}
+
+function canadian(value) {
+  const compact = value.toUpperCase().replace(/[^A-Z0-9]/g, '');
+  return /^[A-Z]\d[A-Z]/.test(compact) ? compact.slice(0, 3) : '';
+}
+
+// Zippopotam wants the outward code only: SW1A 1AA -> SW1A, M1 1AE -> M1.
+function british(value) {
+  const compact = value.toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (/^[A-Z]{1,2}\d[A-Z\d]?\d[A-Z]{2}$/.test(compact)) return compact.slice(0, -3);
+  if (/^[A-Z]{1,2}\d[A-Z\d]?$/.test(compact)) return compact;
+  return '';
+}
+
+function japanese(value) {
+  const numeric = value.replace(/\D/g, '');
+  return numeric.length === 7 ? `${numeric.slice(0, 3)}-${numeric.slice(3)}` : '';
+}
+
+function brazilian(value) {
+  const numeric = value.replace(/\D/g, '');
+  return numeric.length === 8 ? `${numeric.slice(0, 5)}-${numeric.slice(5)}` : '';
+}
+
+function polish(value) {
+  const numeric = value.replace(/\D/g, '');
+  return numeric.length === 5 ? `${numeric.slice(0, 2)}-${numeric.slice(2)}` : '';
+}
+
+function dutch(value) {
+  const match = value.match(/\d{4}/);
+  return match ? match[0] : '';
+}
+
+function portuguese(value) {
+  const numeric = value.replace(/\D/g, '');
+  if (numeric.length === 7) return `${numeric.slice(0, 4)}-${numeric.slice(4)}`;
+  if (numeric.length === 4) return numeric;
+  return '';
+}
+
+const POSTAL = {};
+function addPostal(names, code, normalize) {
+  for (const name of names) POSTAL[fold(name)] = { code, normalize };
+}
+addPostal(['australia'], 'au', digits(4));
+addPostal(['austria', 'österreich', 'osterreich'], 'at', digits(4));
+addPostal(['belgium', 'belgique', 'belgië', 'belgie'], 'be', digits(4));
+addPostal(['brazil', 'brasil'], 'br', brazilian);
+addPostal(['canada'], 'ca', canadian);
+addPostal(['denmark', 'danmark'], 'dk', digits(4));
+addPostal(['finland', 'suomi'], 'fi', digits(5));
+addPostal(['france'], 'fr', digits(5));
+addPostal(['germany', 'deutschland'], 'de', digits(5));
+addPostal(['india'], 'in', digits(6));
+addPostal(['italy', 'italia'], 'it', digits(5));
+addPostal(['japan'], 'jp', japanese);
+addPostal(['mexico', 'méxico', 'mexico'], 'mx', digits(5));
+addPostal(['netherlands', 'the netherlands', 'holland'], 'nl', dutch);
+addPostal(['new zealand'], 'nz', digits(4));
+addPostal(['norway', 'norge'], 'no', digits(4));
+addPostal(['poland', 'polska'], 'pl', polish);
+addPostal(['portugal'], 'pt', portuguese);
+addPostal(['south africa'], 'za', digits(4));
+addPostal(['spain', 'españa', 'espana'], 'es', digits(5));
+addPostal(['sweden', 'sverige'], 'se', digits(5));
+addPostal(['switzerland', 'schweiz', 'suisse', 'svizzera'], 'ch', digits(4));
+addPostal(['united kingdom', 'uk', 'great britain', 'britain', 'england', 'scotland', 'wales', 'northern ireland'], 'gb', british);
+addPostal(['united states', 'united states of america', 'usa', 'us', 'america'], 'us', digits(5));
+
+// Qualifiers that name a region rather than a country. Checked before country codes
+// so CA is California and DE can still match Delaware as well as Germany.
+const REGION_ABBR = {
+  al: 'alabama', ak: 'alaska', az: 'arizona', ar: 'arkansas', ca: 'california',
+  co: 'colorado', ct: 'connecticut', de: 'delaware', dc: 'district of columbia',
+  fl: 'florida', ga: 'georgia', hi: 'hawaii', id: 'idaho', il: 'illinois',
+  in: 'indiana', ia: 'iowa', ks: 'kansas', ky: 'kentucky', la: 'louisiana',
+  me: 'maine', md: 'maryland', ma: 'massachusetts', mi: 'michigan', mn: 'minnesota',
+  ms: 'mississippi', mo: 'missouri', mt: 'montana', ne: 'nebraska', nv: 'nevada',
+  nh: 'new hampshire', nj: 'new jersey', nm: 'new mexico', ny: 'new york',
+  nc: 'north carolina', nd: 'north dakota', oh: 'ohio', ok: 'oklahoma', or: 'oregon',
+  pa: 'pennsylvania', ri: 'rhode island', sc: 'south carolina', sd: 'south dakota',
+  tn: 'tennessee', tx: 'texas', ut: 'utah', vt: 'vermont', va: 'virginia',
+  wa: 'washington', wv: 'west virginia', wi: 'wisconsin', wy: 'wyoming',
+  on: 'ontario', qc: 'quebec', bc: 'british columbia', ab: 'alberta',
+  ns: 'nova scotia', nb: 'new brunswick', mb: 'manitoba', sk: 'saskatchewan',
+  pe: 'prince edward island', nl: 'newfoundland and labrador',
+};
+
+const COUNTRY_ABBR = {
+  uk: 'gb', gb: 'gb', britain: 'gb', 'great britain': 'gb',
+  us: 'us', usa: 'us', america: 'us', 'united states': 'us', 'united states of america': 'us',
+  uae: 'ae', holland: 'nl', 'the netherlands': 'nl', czechia: 'cz', 'czech republic': 'cz',
+  korea: 'kr', 'south korea': 'kr', russia: 'ru', brasil: 'br',
+  fr: 'fr', de: 'de', jp: 'jp', au: 'au', nz: 'nz', br: 'br', mx: 'mx', za: 'za',
+  nl: 'nl', se: 'se', no: 'no', it: 'it', es: 'es', ch: 'ch', pt: 'pt', ie: 'ie',
+  pl: 'pl', in: 'in', at: 'at', be: 'be', dk: 'dk', fi: 'fi',
+};
+
+function storage() {
+  try {
+    return typeof localStorage === 'undefined' ? null : localStorage;
+  } catch {
+    return null;
+  }
+}
+
+function loadJSON(key) {
+  const store = storage();
+  if (!store) return null;
+  try { return JSON.parse(store.getItem(key) || 'null'); } catch { return null; }
+}
+
+function barePostal(value) {
+  const trimmed = String(value ?? '').trim();
+  if (/^\d{5}(?:-\d{4})?$/.test(trimmed)) return false;
+  return /^\d[\d\s-]{2,}$/.test(trimmed);
+}
+
+function placeHint(value) {
+  if (barePostal(value)) return 'Add the country after that postal code, such as 2000, Australia.';
+  return 'Enter a city and country, or a 5-digit US ZIP code';
+}
+
+function acceptedPlace(value) {
+  if (typeof value !== 'string') return '';
+  const query = value.trim().replace(/\s+/g, ' ');
+  if (query.length < 2 || query.length > 80 || !PLACE_TEXT.test(query)) return '';
+  const zip = query.match(/^(\d{5})(?:-\d{4})?$/);
+  if (zip) return zip[1];
+  if (barePostal(query)) return '';
+  return query;
+}
+
+function asLocation(entry, query) {
+  const latitude = Number(entry?.latitude);
+  const longitude = Number(entry?.longitude);
+  const stored = entry?.query || entry?.zip || '';
+  if (!stored || fold(stored) !== fold(query)) return null;
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+  return {
+    query,
+    latitude,
+    longitude,
+    name: entry.name || query,
+    country: entry.country || (/^\d{5}$/.test(query) ? 'US' : ''),
+  };
+}
+
+function cachedPlace(query) {
+  const key = fold(query);
+  if (memory.has(key)) return memory.get(key);
+  for (const listKey of [CACHE_KEY, ...LEGACY_LISTS]) {
+    const entries = loadJSON(listKey);
+    if (!Array.isArray(entries)) continue;
+    for (const entry of entries) {
+      const location = asLocation(entry, query);
+      if (location) return location;
+    }
+  }
+  for (const legacy of LEGACY_KEYS) {
+    const location = asLocation(loadJSON(legacy), query);
+    if (location) return location;
+  }
+  return null;
+}
+
+function remember(location) {
+  memory.set(fold(location.query), location);
+  const store = storage();
+  if (!store) return;
+  const current = loadJSON(CACHE_KEY);
+  const entries = (Array.isArray(current) ? current : [])
+    .filter((entry) => fold(entry?.query || '') !== fold(location.query));
+  entries.unshift(location);
+  try { store.setItem(CACHE_KEY, JSON.stringify(entries.slice(0, 12))); } catch { /* unavailable */ }
+}
+
+async function fetchJSON(url) {
+  let response;
+  try {
+    response = await fetch(url);
+  } catch {
+    throw new Error('Could not reach the location service');
+  }
+  if (!response.ok) return null;
+  try {
+    return await response.json();
+  } catch {
+    throw new Error('Could not reach the location service');
+  }
+}
+
+function chooseZipPlace(places) {
+  if (!places?.length) return null;
+  const names = places.map((place) => place['place name'] || '');
+  const broader = places.filter((place) => {
+    const name = place['place name'] || '';
+    return names.some((other) => other.length > name.length && other.startsWith(name));
+  });
+  if (!broader.length) return places[0];
+  broader.sort((a, b) => a['place name'].length - b['place name'].length);
+  return broader[0];
+}
+
+function fromZip(query, json) {
+  const place = chooseZipPlace(json?.places);
+  const latitude = Number(place?.latitude);
+  const longitude = Number(place?.longitude);
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+  const country = String(json['country abbreviation'] || '').toUpperCase();
+  const city = place['place name'] || query;
+  const region = place['state abbreviation'] || place.state || '';
+  const name = country === 'US'
+    ? [city, region].filter(Boolean).join(', ')
+    : [city, json.country].filter(Boolean).join(', ');
+  return { query, latitude, longitude, name, country };
+}
+
+async function usZip(query) {
+  const json = await fetchJSON(`https://api.zippopotam.us/us/${query}`);
+  const location = fromZip(query, json);
+  if (!location) {
+    throw new Error('That ZIP code was not found. Outside the United States, enter a city and country, such as Lisbon, Portugal.');
+  }
+  return location;
+}
+
+function parseCoordinates(query) {
+  const match = query.match(/^(-?\d{1,3}(?:\.\d+)?)\s*,\s*(-?\d{1,3}(?:\.\d+)?)$/);
+  if (!match || !query.includes('.')) return null;
+  const latitude = Number(match[1]);
+  const longitude = Number(match[2]);
+  if (Math.abs(latitude) > 90 || Math.abs(longitude) > 180) {
+    throw new Error('Latitude must be between -90 and 90, and longitude between -180 and 180.');
+  }
+  const ns = latitude >= 0 ? 'N' : 'S';
+  const ew = longitude >= 0 ? 'E' : 'W';
+  return {
+    latitude,
+    longitude,
+    name: `${Math.abs(latitude).toFixed(2)}° ${ns}, ${Math.abs(longitude).toFixed(2)}° ${ew}`,
+  };
+}
+
+async function postalLookup(query) {
+  const comma = query.lastIndexOf(',');
+  if (comma === -1) return null;
+  const code = query.slice(0, comma).trim();
+  const countryName = fold(query.slice(comma + 1).trim());
+  if (!/\d/.test(code) || !POSTAL[countryName]) return null;
+  const { code: country, normalize } = POSTAL[countryName];
+  const postal = normalize(code);
+  if (!postal) return null;
+  const json = await fetchJSON(`https://api.zippopotam.us/${country}/${encodeURIComponent(postal)}`);
+  return fromZip(query, json);
+}
+
+function nameScore(resultName, city) {
+  if (!city || !resultName) return 0;
+  if (resultName === city) return 100;
+  if (city.length >= 4 && (resultName.startsWith(city) || city.startsWith(resultName))) return 80;
+  return 0;
+}
+
+function qualifierScore(result, part) {
+  const admin1 = fold(result.admin1 || '');
+  const admin2 = fold(result.admin2 || '');
+  const country = fold(result.country || '');
+  const code = (result.country_code || '').toLowerCase();
+  const region = REGION_ABBR[part];
+  const countryCode = COUNTRY_ABBR[part];
+  const regionHit = (region && admin1 === region) || admin1 === part || admin2 === part;
+  const countryHit = country === part || (countryCode && code === countryCode);
+  if (regionHit || countryHit) return 50;
+  if ((admin1 && (admin1.includes(part) || part.includes(admin1))) || (country && country.includes(part))) return 25;
+  return -30;
+}
+
+function describeGeocode(result) {
+  const name = result.name || '';
+  const region = result.admin1 && result.admin1 !== name ? result.admin1 : '';
+  const country = result.country && result.country !== name && result.country !== region ? result.country : '';
+  if ((result.country_code || '').toUpperCase() === 'US') return [name, region].filter(Boolean).join(', ');
+  if (country) return [name, country].join(', ');
+  return [name, region].filter(Boolean).join(', ');
+}
+
+function notFoundMessage(query) {
+  if (!/[\p{Script=Latin}\d]/u.test(query)) {
+    return 'Could not find that place. Enter the city name in English, such as Tokyo or Cairo.';
+  }
+  return 'Could not find that place. Try the city and country, such as Lisbon, Portugal.';
+}
+
+async function searchPlaces(name, countryCode) {
+  const params = new URLSearchParams({ name, count: '100', language: 'en', format: 'json' });
+  if (countryCode) params.set('countryCode', countryCode);
+  const json = await fetchJSON(`https://geocoding-api.open-meteo.com/v1/search?${params}`);
+  return json?.results || [];
+}
+
+function populatedPlace(result) {
+  const code = String(result.feature_code || '');
+  return !code || code.startsWith('PPL');
+}
+
+function nameMatches(result, city) {
+  const name = fold(result.name || '');
+  const query = fold(city);
+  return Boolean(name && query && (name === query || name.startsWith(query)));
+}
+
+function rankPlaces(results, query) {
+  const parts = query.split(',').map((part) => fold(part.trim())).filter(Boolean);
+  const [city, ...rest] = parts;
+  let best = null;
+  let bestScore = 0;
+  for (const result of results) {
+    if (!Number.isFinite(result.latitude) || !Number.isFinite(result.longitude)) continue;
+    const matched = nameScore(fold(result.name || ''), city);
+    if (!matched) continue;
+    let score = matched + Math.log10((result.population || 0) + 1);
+    if (rest.length) {
+      const extra = rest.reduce((sum, part) => sum + qualifierScore(result, part), 0);
+      if (extra < 20) continue;
+      score += extra;
+    }
+    if (score > bestScore) {
+      bestScore = score;
+      best = result;
+    }
+  }
+  return best;
+}
+
+async function geocode(query) {
+  const parts = query.split(',').map((part) => part.trim()).filter(Boolean);
+  let best = rankPlaces(await searchPlaces(query), query);
+  if (!best && parts.length > 1) {
+    const countryCode = parts.slice(1).map((part) => COUNTRY_ABBR[fold(part)]).find(Boolean);
+    // "DE" is both Germany and Delaware. A region match such as Dover, DE is kept above.
+    // This second search covers Berlin, DE, where the first pass only saw Delaware.
+    if (countryCode) best = rankPlaces(await searchPlaces(parts[0], countryCode), query);
+  }
+  if (!best) throw new Error(notFoundMessage(query));
+  return {
+    query,
+    latitude: best.latitude,
+    longitude: best.longitude,
+    name: describeGeocode(best) || query,
+    country: String(best.country_code || '').toUpperCase(),
+  };
+}
+
+function choiceLabel(result) {
+  const parts = [result.name, result.admin1, result.country];
+  return parts.filter((part, index) => part && parts.indexOf(part) === index).join(', ');
+}
+
+function choiceFromResult(result) {
+  const name = describeGeocode(result) || result.name || '';
+  return {
+    value: name,
+    name,
+    label: choiceLabel(result) || name,
+    latitude: result.latitude,
+    longitude: result.longitude,
+    country: String(result.country_code || '').toUpperCase(),
+  };
+}
+
+function rememberChoice(choice) {
+  const query = acceptedPlace(choice?.value);
+  const latitude = Number(choice?.latitude);
+  const longitude = Number(choice?.longitude);
+  if (!query || !Number.isFinite(latitude) || !Number.isFinite(longitude)) return;
+  remember({
+    query,
+    latitude,
+    longitude,
+    name: choice.name || query,
+    country: choice.country || '',
+  });
+}
+
+async function suggestPlaces(value) {
+  const query = String(value || '').trim().replace(/\s+/g, ' ');
+  if (query.length < 2) return [];
+  const choices = [];
+  const seen = new Set();
+  const add = (choice) => {
+    if (!choice?.value || !Number.isFinite(choice.latitude) || !Number.isFinite(choice.longitude)) return;
+    const id = `${choice.latitude.toFixed(2)},${choice.longitude.toFixed(2)}`;
+    if (seen.has(id)) return;
+    seen.add(id);
+    choices.push(choice);
+  };
+  if (/^\d{5}$/.test(query)) {
+    try {
+      const place = await usZip(query);
+      add({ value: place.name, name: place.name, label: `${place.name}, United States`, latitude: place.latitude, longitude: place.longitude, country: place.country });
+    } catch (error) {
+      if (error.message === 'Could not reach the location service') throw error;
+    }
+  }
+  try {
+    const coordinates = parseCoordinates(query);
+    if (coordinates) add({ value: query, name: coordinates.name, label: coordinates.name, country: '', ...coordinates });
+  } catch (error) {
+    if (/Latitude must be/.test(error.message)) throw error;
+  }
+  const postal = await postalLookup(query);
+  if (postal) add({ value: postal.name, name: postal.name, label: postal.name, latitude: postal.latitude, longitude: postal.longitude, country: postal.country });
+  const parts = query.split(',').map((part) => part.trim()).filter(Boolean);
+  const countryCode = parts.slice(1).map((part) => COUNTRY_ABBR[fold(part)]).find(Boolean);
+  const batches = [await searchPlaces(query)];
+  if (countryCode) batches.push(await searchPlaces(parts[0], countryCode));
+  const matches = batches.flat().filter((result) => nameMatches(result, parts[0] || query));
+  const places = matches.filter(populatedPlace);
+  for (const result of (places.length ? places : matches)) add(choiceFromResult(result));
+  choices.sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true, sensitivity: 'base' }));
+  return choices;
+}
+
+async function lookup(query) {
+  if (/^\d{5}$/.test(query)) return usZip(query);
+  const coordinates = parseCoordinates(query);
+  if (coordinates) return { query, country: '', ...coordinates };
+  const postal = await postalLookup(query);
+  if (postal) return postal;
+  return geocode(query);
+}
+
+async function resolvePlace(value) {
+  const query = acceptedPlace(value);
+  if (!query) throw new Error(placeHint(value));
+  const cached = cachedPlace(query);
+  if (cached) {
+    memory.set(fold(query), cached);
+    return cached;
+  }
+  const location = await lookup(query);
+  remember(location);
+  return location;
+}
+
+// ---- js/clock.js ----
+// On-screen clock, placed and styled the same way as fayling-web-ocean-pictureframe.
+function createClock(root, cfg) {
+  const timeEl = root.querySelector('.clock-time');
+  const dateEl = root.querySelector('.clock-date');
+
+  function update() {
+    const clock = cfg.clock;
+    const now = new Date();
+    timeEl.textContent = now.toLocaleTimeString([], {
+      hour: '2-digit',
+      minute: '2-digit',
+      second: clock.seconds ? '2-digit' : undefined,
+      hour12: !clock.hour24,
+    });
+    dateEl.textContent = clock.date
+      ? now.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' })
+      : '';
+    root.dateTime = now.toISOString();
+  }
+
+  function place() {
+    const position = cfg.clock.position;
+    root.style.top = root.style.right = root.style.bottom = root.style.left = root.style.transform = '';
+    const edge = '32px';
+    if (position.startsWith('top')) root.style.top = position === 'top-right' ? '58px' : edge;
+    else root.style.bottom = edge;
+    if (position.endsWith('left')) root.style.left = edge;
+    else if (position.endsWith('right')) root.style.right = edge;
+    else {
+      root.style.left = '50%';
+      root.style.transform = 'translateX(-50%)';
+    }
+  }
+
+  function apply() {
+    const clock = cfg.clock;
+    root.hidden = !clock.enabled;
+    root.dataset.style = clock.style;
+    root.style.fontSize = clock.size + 'px';
+    root.style.color = clock.color;
+    root.style.opacity = String(clock.opacity);
+    root.style.backgroundColor = `rgba(11, 15, 20, ${clock.background})`;
+    root.style.textShadow = clock.background < 0.35 ? '0 2px 8px #000c' : 'none';
+    place();
+    update();
+  }
+
+  const timer = setInterval(update, 250);
+  return { apply, stop() { clearInterval(timer); } };
+}
+
+// ---- js/weather.js ----
+// Weather card, fed by Open-Meteo and U.S. National Weather Service alerts.
+// The card, icons, and refresh behavior follow fayling-web-ocean-pictureframe.
+
+const ICONS = {
+  drop: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 2.5S5.8 10 5.8 15a6.2 6.2 0 0 0 12.4 0C18.2 10 12 2.5 12 2.5Z"/><path d="M9 16.2a3.2 3.2 0 0 0 3 2.1"/></svg>',
+  temp: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 14.8V5a3 3 0 0 1 6 0v9.8a5 5 0 1 1-6 0Z"/><path d="M12 8v9"/></svg>',
+  humidity: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 2.5S5.8 10 5.8 15a6.2 6.2 0 0 0 12.4 0C18.2 10 12 2.5 12 2.5Z"/><path d="M9 16.2a3.2 3.2 0 0 0 3 2.1"/></svg>',
+  wind: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M3 8h11.5a2.5 2.5 0 1 0-2.3-3.5M3 12h16a2.5 2.5 0 1 1-2.3 3.5M3 16h7"/></svg>',
+  alert: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3 2.5 20h19L12 3Z"/><path d="M12 9v5m0 3v.1"/></svg>',
+};
+
+function condition(code) {
+  if (code === 0) return ['Clear', 'clear'];
+  if (code <= 2) return ['Partly cloudy', 'partly'];
+  if (code === 3) return ['Overcast', 'cloud'];
+  if (code === 45 || code === 48) return ['Fog', 'fog'];
+  if (code >= 51 && code <= 57) return ['Drizzle', 'rain'];
+  if (code >= 61 && code <= 67) return ['Rain', 'rain'];
+  if (code >= 71 && code <= 77) return ['Snow', 'snow'];
+  if (code >= 80 && code <= 82) return ['Rain showers', 'rain'];
+  if (code >= 85 && code <= 86) return ['Snow showers', 'snow'];
+  if (code >= 95) return ['Thunderstorms', 'storm'];
+  return ['Current conditions', 'cloud'];
+}
+
+function weatherIcon(kind, day) {
+  const sun = '<circle cx="31" cy="28" r="11" fill="currentColor"/><g stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M31 8v-5m0 50v-5M11 28H6m50 0h-5M17 14l-4-4m36 36-4-4m0-28 4-4M13 46l4-4"/></g>';
+  const moon = '<path d="M40 8a21 21 0 1 0 9 37A18 18 0 0 1 40 8Z" fill="currentColor"/>';
+  const cloud = '<path d="M17 49h30a10 10 0 0 0 1-20 16 16 0 0 0-30-2A11 11 0 0 0 17 49Z" fill="#e9f3fa" stroke="#adc1cf" stroke-width="2"/>';
+  const base = day ? sun : moon;
+  const wrap = (body) => `<svg viewBox="0 0 64 64" aria-hidden="true">${body}</svg>`;
+  if (kind === 'clear') return wrap(base);
+  if (kind === 'partly') return wrap(base + cloud);
+  if (kind === 'cloud') return wrap('<path d="M14 47h36a12 12 0 0 0 0-24 19 19 0 0 0-35-1A13 13 0 0 0 14 47Z" fill="#e9f3fa" stroke="#adc1cf" stroke-width="2"/>');
+  if (kind === 'fog') return wrap(cloud + '<g stroke="#d9e8ef" stroke-width="3" stroke-linecap="round"><path d="M10 53h42M16 59h34"/></g>');
+  if (kind === 'snow') return wrap(cloud + '<g fill="#d8f3ff"><circle cx="23" cy="56" r="2"/><circle cx="35" cy="58" r="2"/><circle cx="47" cy="55" r="2"/></g>');
+  if (kind === 'storm') return wrap(cloud + '<path d="m35 45-8 12h7l-3 7 13-15h-8l4-4Z" fill="#ffd24f"/>');
+  return wrap(cloud + '<g stroke="#7dd7ff" stroke-width="3" stroke-linecap="round"><path d="m22 53-3 6m16-6-3 6m16-6-3 6"/></g>');
+}
+
+function detail(icon, text) {
+  return `<span class="weather-detail">${ICONS[icon]}<span>${text}</span></span>`;
+}
+
+function compassPoint(degrees) {
+  const points = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+  return points[Math.round((Number(degrees) || 0) / 45) % 8];
+}
+
+function rounded(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? Math.round(number) : null;
+}
+
+function tempBlock(weather, current, unit, high, low) {
+  const currentHTML = weather.temperature
+    ? `<div class="weather-temp">${Math.round(current.temperature_2m)}${unit}</div>`
+    : '';
+  const rangeHTML = high == null || low == null ? '' : `<div class="weather-range" aria-label="Today high ${high} degrees, low ${low} degrees"><span>H ${high}°</span><span>L ${low}°</span></div>`;
+  return currentHTML || rangeHTML ? `<div class="weather-temp-block">${currentHTML}${rangeHTML}</div>` : '';
+}
+
+function todayTemperatures(daily, currentTime) {
+  const times = daily?.time || [];
+  if (!times.length) return null;
+  const today = String(currentTime || '').slice(0, 10);
+  const found = times.indexOf(today);
+  const index = found >= 0 ? found : 0;
+  return {
+    high: daily.temperature_2m_max?.[index],
+    low: daily.temperature_2m_min?.[index],
+  };
+}
+
+function escapeHTML(value) {
+  return String(value).replace(/[&<>"']/g, (character) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  })[character]);
+}
+
+function highestAlert(features) {
+  const rank = { Extreme: 4, Severe: 3, Moderate: 2, Minor: 1, Unknown: 0 };
+  return [...features].sort((a, b) => (rank[b.properties?.severity] || 0) - (rank[a.properties?.severity] || 0))[0];
+}
+
+function alertStatement(props) {
+  const clean = (value) => String(value || '').replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+  const body = [clean(props.description), clean(props.instruction)].filter(Boolean).join('\n\n');
+  return body || props.headline || props.areaDesc || 'See local authorities for details';
+}
+
+function playAlertScroll(root) {
+  const viewport = root.querySelector('.weather-alert-scroll');
+  const track = viewport?.querySelector('.weather-alert-track');
+  const text = track?.querySelector('p');
+  if (!text?.isConnected || track.querySelector('[aria-hidden]')) return;
+  if (text.scrollHeight - viewport.clientHeight < 8) return;
+  const clone = text.cloneNode(true);
+  clone.setAttribute('aria-hidden', 'true');
+  text.after(clone);
+  track.style.animationDuration = `${Math.min(180, Math.max(12, text.offsetHeight / 14))}s`;
+  viewport.classList.add('scrolling');
+}
+
+function createWeather(root, cfg, status) {
+  let timer = 0;
+  let request = 0;
+  let controller = null;
+  let fetchDelay = 0;
+  let data = null;
+
+  function render() {
+    const weather = cfg.weather;
+    root.hidden = !weather.enabled;
+    root.dataset.position = weather.position;
+    if (!weather.enabled || !data) return;
+    if (data.error) {
+      root.innerHTML = `<div class="weather-card weather-error">${escapeHTML(data.error)}</div>`;
+      return;
+    }
+    const { current, hourly, daily, location, alerts } = data;
+    const [label, icon] = condition(current.weather_code);
+    const metric = weather.unit === 'celsius';
+    const unit = metric ? '°C' : '°F';
+    const speedUnit = metric ? 'km/h' : 'mph';
+    const high = rounded(daily?.high);
+    const low = rounded(daily?.low);
+    const details = [];
+    if (weather.feels) details.push(detail('temp', `Feels ${Math.round(current.apparent_temperature)}${unit}`));
+    if (weather.precipitation) {
+      const chance = hourly.chances[0] ?? 0;
+      details.push(detail('drop', `${chance}% · ${current.precipitation.toFixed(metric ? 1 : 2)} ${metric ? 'mm' : 'in'}`));
+    }
+    if (weather.humidity) details.push(detail('humidity', `${current.relative_humidity_2m}%`));
+    if (weather.wind) details.push(detail('wind', `${compassPoint(current.wind_direction_10m)} ${Math.round(current.wind_speed_10m)} ${speedUnit}`));
+
+    let alertHTML = '';
+    if (weather.alerts && alerts.length) {
+      const alert = highestAlert(alerts);
+      const props = alert.properties || {};
+      const extra = alerts.length > 1 ? ` · ${alerts.length} active alerts` : '';
+      const severity = ['Extreme', 'Severe', 'Moderate', 'Minor'].includes(props.severity) ? props.severity : 'Unknown';
+      alertHTML = `<div class="weather-alert" data-severity="${severity}">
+        <span class="weather-alert-icon">${ICONS.alert}</span><div><strong>${escapeHTML(props.event || 'Weather alert')}${extra}</strong>
+        <div class="weather-alert-scroll"><div class="weather-alert-track"><p>${escapeHTML(alertStatement(props))}</p></div></div></div></div>`;
+    }
+    let forecastHTML = '';
+    if (weather.forecast && hourly.times.length) {
+      const hours = hourly.times.map((time, i) => {
+        const text = new Intl.DateTimeFormat([], { hour: 'numeric' }).format(new Date(time));
+        const temperature = rounded(hourly.temperatures?.[i]);
+        const tempLine = temperature == null ? '' : `<strong>${temperature}°</strong>`;
+        return `<div class="weather-hour"><time>${text}</time>${tempLine}<span class="weather-hour-rain">${hourly.chances[i] ?? 0}% rain</span></div>`;
+      }).join('');
+      forecastHTML = `<div class="weather-forecast">${hours}</div>`;
+    }
+    const updated = new Date(data.updatedAt);
+    const updatedText = new Intl.DateTimeFormat([], {
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: !cfg.clock.hour24,
+    }).format(updated);
+    root.innerHTML = `${alertHTML}<div class="weather-card"><div class="weather-main">
+      <div class="weather-icon">${weatherIcon(icon, current.is_day)}</div>
+      <div><button type="button" class="weather-place" title="${escapeHTML(location.name || location.query)}" aria-label="Change weather location, ${escapeHTML(location.name || location.query)}">${escapeHTML(location.name || location.query)}</button><div class="weather-condition">${label}</div></div>
+      ${tempBlock(weather, current, unit, high, low)}
+      </div>${details.length ? `<div class="weather-details">${details.join('')}</div>` : ''}${forecastHTML}
+      <time class="weather-updated" datetime="${updated.toISOString()}">Updated ${updatedText}</time></div>`;
+    if (root.querySelector('.weather-alert-scroll')) requestAnimationFrame(() => playAlertScroll(root));
+  }
+
+  async function refresh() {
+    const weather = cfg.weather;
+    if (!weather.enabled) return;
+    const token = ++request;
+    controller?.abort();
+    controller = new AbortController();
+    try {
+      status('Updating weather…');
+      const location = await resolvePlace(weather.location);
+      const metric = weather.unit === 'celsius';
+      const params = new URLSearchParams({
+        latitude: location.latitude,
+        longitude: location.longitude,
+        current: 'temperature_2m,apparent_temperature,relative_humidity_2m,precipitation,weather_code,wind_speed_10m,wind_direction_10m,is_day',
+        hourly: 'precipitation_probability,temperature_2m',
+        daily: 'temperature_2m_max,temperature_2m_min',
+        temperature_unit: metric ? 'celsius' : 'fahrenheit',
+        wind_speed_unit: metric ? 'kmh' : 'mph',
+        precipitation_unit: metric ? 'mm' : 'inch',
+        timezone: 'auto',
+        forecast_days: '2',
+      });
+      const weatherURL = `https://api.open-meteo.com/v1/forecast?${params}`;
+      const alertURL = `https://api.weather.gov/alerts/active?point=${location.latitude},${location.longitude}`;
+      const alerts = location.country === 'US'
+        ? fetch(alertURL, { signal: controller.signal, headers: { Accept: 'application/geo+json' } }).then((r) => r.ok ? r.json() : { features: [] })
+        : Promise.resolve({ features: [] });
+      const [weatherResult, alertResult] = await Promise.allSettled([
+        fetch(weatherURL, { signal: controller.signal }).then((r) => {
+          if (!r.ok) throw new Error('Weather service unavailable');
+          return r.json();
+        }),
+        alerts,
+      ]);
+      if (token !== request) return;
+      if (weatherResult.status !== 'fulfilled') throw weatherResult.reason;
+      const forecast = weatherResult.value;
+      const now = Date.now();
+      const future = (forecast.hourly?.time || []).map((time, i) => ({
+        time,
+        chance: forecast.hourly.precipitation_probability?.[i],
+        temperature: forecast.hourly.temperature_2m?.[i],
+      })).filter((item) => new Date(item.time).getTime() >= now - 1800000).slice(0, 3);
+      data = {
+        current: forecast.current,
+        location,
+        alerts: alertResult.status === 'fulfilled' ? alertResult.value.features || [] : [],
+        hourly: {
+          times: future.map((item) => item.time),
+          chances: future.map((item) => item.chance),
+          temperatures: future.map((item) => item.temperature),
+        },
+        daily: todayTemperatures(forecast.daily, forecast.current?.time),
+        updatedAt: now,
+      };
+      status(`${location.name || location.query} weather updated`);
+      render();
+    } catch (error) {
+      if (error.name === 'AbortError' || token !== request) return;
+      data = { error: error.message || 'Weather unavailable' };
+      status(data.error);
+      render();
+    }
+  }
+
+  function update(fetchNow = false) {
+    render();
+    clearInterval(timer);
+    clearTimeout(fetchDelay);
+    if (cfg.weather.enabled) {
+      timer = setInterval(() => refresh(), Math.max(1, cfg.weather.refresh) * 60000);
+      if (fetchNow || !data) fetchDelay = setTimeout(() => refresh(), 50);
+    }
+  }
+
+  return { update };
+}
+
 // ---- js/settings.js ----
 // Settings panel, modelled on fayling-web-ocean-pictureframe: a dim toolbar, a collapsible
 // panel built from a schema, and persistence in localStorage. A share link, a JSON file,
 // and "reset" round-trip the same values. Only values that differ from the defaults are
 // stored. URL overrides (?s=, ?config=, dotted keys, ?info=1) are applied on top.
+
 
 
 const SETTINGS_KEY = 'fishtank-settings-v1';
@@ -4575,6 +5476,61 @@ const SECTIONS = [
       ['audio.bubblePlink', 'Plink', 0, 1, 0.01],
     ] },
   ] },
+  { title: 'Widgets', groups: [
+    { title: 'Clock', groups: [
+      { title: 'Display', settings: [
+        ['clock.enabled', 'Clock', 'toggle', 'On', 'Off'],
+        ['clock.hour24', '24-hour time', 'toggle', 'On', 'Off'],
+        ['clock.seconds', 'Show seconds', 'toggle', 'Show', 'Hide'],
+        ['clock.date', 'Show date', 'toggle', 'Show', 'Hide'],
+      ] },
+      { title: 'Appearance', settings: [
+        ['clock.style', 'Style', 'select', [
+          ['modern', 'Modern'],
+          ['mono', 'Monospace'],
+          ['classic', 'Classic'],
+        ]],
+        ['clock.position', 'Position', 'select', [
+          ['top-left', 'Top left'],
+          ['top-center', 'Top center'],
+          ['top-right', 'Top right'],
+          ['bottom-left', 'Bottom left'],
+          ['bottom-center', 'Bottom center'],
+          ['bottom-right', 'Bottom right'],
+        ]],
+        ['clock.size', 'Size (px)', 32, 144, 1],
+        ['clock.color', 'Color', 'color'],
+        ['clock.opacity', 'Opacity', 0.2, 1, 0.01],
+        ['clock.background', 'Background', 0, 0.8, 0.01],
+      ] },
+    ] },
+    { title: 'Weather', groups: [
+      { title: 'Location and updates', settings: [
+        ['weather.enabled', 'Weather widget', 'toggle', 'Show', 'Hide'],
+        ['weather.location', 'Location', 'text', 'Lisbon, Portugal'],
+        ['weather.refresh', 'Refresh (minutes)', 5, 60, 5],
+        ['weather.unit', 'Units', 'select', [
+          ['fahrenheit', 'Fahrenheit / mph'],
+          ['celsius', 'Celsius / km/h'],
+        ]],
+        ['weather.position', 'Position', 'select', [
+          ['top-left', 'Top left'],
+          ['top-right', 'Top right'],
+          ['bottom-left', 'Bottom left'],
+          ['bottom-right', 'Bottom right'],
+        ]],
+      ] },
+      { title: 'Information', settings: [
+        ['weather.temperature', 'Current temperature', 'toggle', 'Show', 'Hide'],
+        ['weather.feels', 'Feels like', 'toggle', 'Show', 'Hide'],
+        ['weather.precipitation', 'Precipitation', 'toggle', 'Show', 'Hide'],
+        ['weather.humidity', 'Humidity', 'toggle', 'Show', 'Hide'],
+        ['weather.wind', 'Wind', 'toggle', 'Show', 'Hide'],
+        ['weather.forecast', 'Next 3 hours', 'toggle', 'Show', 'Hide'],
+        ['weather.alerts', 'U.S. weather alerts', 'toggle', 'Show', 'Hide'],
+      ] },
+    ] },
+  ] },
 ];
 
 const SPEC = new Map();
@@ -4623,6 +5579,8 @@ function coerce(spec, raw) {
   if (!spec) return undefined;
   if (spec[2] === 'toggle') return booleanSetting(raw);
   if (spec[2] === 'color') return typeof raw === 'string' && /^#[0-9a-f]{6}$/i.test(raw) ? raw.toLowerCase() : undefined;
+  if (spec[2] === 'select') return spec[3].some((option) => option[0] === raw) ? raw : undefined;
+  if (spec[2] === 'text') return acceptedPlace(raw) || undefined;
   const n = typeof raw === 'number' ? raw : Number(raw);
   if (!Number.isFinite(n)) return undefined;
   return Math.min(spec[3], Math.max(spec[2], n));
@@ -4691,7 +5649,14 @@ function prepareConfig(search = location.search) {
   if (packed && hasPath(packed, 'fish.population')) populationFromUrl = true;
   if (packed && hasPath(packed, 'fish.speciesDistribution')) speciesFromUrl = true;
   if (url.get('info') === '1') { cfg.display.showInfo = true; visitOnly.add('display.showInfo'); }
-  if (url.has('shot')) { cfg.display.showButtons = false; visitOnly.add('display.showButtons'); }
+  if (url.has('shot')) {
+    cfg.display.showButtons = false;
+    cfg.clock.enabled = false;
+    cfg.weather.enabled = false;
+    visitOnly.add('display.showButtons');
+    visitOnly.add('clock.enabled');
+    visitOnly.add('weather.enabled');
+  }
   // ?fish.population=50 scales the mix. A URL that names species instead is the mix itself.
   if (speciesFromUrl && !populationFromUrl) cfg.fish.population = Object.values(cfg.fish.speciesDistribution).reduce((a, b) => a + b, 0);
   settleFish(cfg);
@@ -4777,7 +5742,8 @@ function createSettings(cfg, visitOnly, onChange) {
     if (control.kind === 'bool') {
       control.input.checked = value;
       control.output.textContent = value ? control.onText : control.offText;
-    } else if (control.kind === 'color') control.input.value = value;
+    } else if (control.kind === 'color' || control.kind === 'select') control.input.value = value;
+    else if (control.kind === 'text') control.input.value = value;
     else {
       control.input.value = String(value);
       control.output.textContent = control.input.value;
@@ -4839,6 +5805,7 @@ function createSettings(cfg, visitOnly, onChange) {
     } else {
       setPath(cfg, path, value);
       paint(path);
+      if (controlKind(path) === 'text') refreshPlaceLabel(path);
     }
     refreshLocks();
     paintSound();
@@ -4902,6 +5869,53 @@ function createSettings(cfg, visitOnly, onChange) {
     parent.appendChild(row);
     controls.set(path, { input: inp, output: val, row, kind: 'bool', onText, offText });
   }
+  function addSelect(parent, path, label, options) {
+    const row = document.createElement('label');
+    row.className = 'select';
+    const name = document.createElement('span'); name.textContent = label;
+    const inp = document.createElement('select');
+    for (const [value, text] of options) {
+      const option = document.createElement('option');
+      option.value = value;
+      option.textContent = text;
+      inp.appendChild(option);
+    }
+    inp.value = getPath(cfg, path);
+    inp.addEventListener('change', () => commit(path, inp.value));
+    row.append(name, inp);
+    parent.appendChild(row);
+    controls.set(path, { input: inp, row, kind: 'select' });
+  }
+  function addPlace(parent, path, label) {
+    const row = document.createElement('div');
+    row.className = 'place';
+    const name = document.createElement('span');
+    name.textContent = label;
+    const display = document.createElement('span');
+    display.className = 'place-value';
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'place-pick';
+    button.textContent = '...';
+    button.setAttribute('aria-haspopup', 'dialog');
+    button.setAttribute('aria-label', `Choose ${label.toLowerCase()}`);
+    button.addEventListener('click', () => openPlaceDialog(path));
+    let stored = getPath(cfg, path);
+    display.textContent = stored;
+    display.title = stored;
+    Object.defineProperty(button, 'value', {
+      configurable: true,
+      get() { return stored; },
+      set(next) {
+        stored = String(next ?? '');
+        display.textContent = stored;
+        display.title = stored;
+      },
+    });
+    row.append(name, display, button);
+    parent.appendChild(row);
+    controls.set(path, { input: button, display, row, kind: 'text' });
+  }
   function addColor(parent, path, label) {
     const row = document.createElement('label');
     row.className = 'color';
@@ -4914,9 +5928,17 @@ function createSettings(cfg, visitOnly, onChange) {
     parent.appendChild(row);
     controls.set(path, { input: inp, row, kind: 'color' });
   }
+  function controlKind(path) {
+    const kind = SPEC.get(path)?.[2];
+    if (kind === 'toggle') return 'bool';
+    if (kind === 'color' || kind === 'select' || kind === 'text') return kind;
+    return kind == null ? '' : 'number';
+  }
   function addSetting(host, setting) {
     if (setting[2] === 'toggle') addToggle(host, setting[0], setting[1], setting[3], setting[4]);
+    else if (setting[2] === 'select') addSelect(host, setting[0], setting[1], setting[3]);
     else if (setting[2] === 'color') addColor(host, setting[0], setting[1]);
+    else if (setting[2] === 'text') addPlace(host, setting[0], setting[1]);
     else addSlider(host, ...setting);
   }
   function addGroups(parent, groups, kind) {
@@ -4940,6 +5962,8 @@ function createSettings(cfg, visitOnly, onChange) {
       ['Esc', 'Close settings'],
       ['H', 'Show or hide settings'],
       ['M', 'Turn sound on or off'],
+      ['T', 'Show or hide the clock'],
+      ['F', 'Show or hide the weather'],
     ]) {
       const term = document.createElement('dt'); term.textContent = key;
       const detail = document.createElement('dd'); detail.textContent = action;
@@ -5021,6 +6045,7 @@ function createSettings(cfg, visitOnly, onChange) {
     mix = clone(cfg.fish.speciesDistribution);
     settleFish(cfg);
     for (const path of SPEC.keys()) paint(path);
+    refreshPlaceLabels();
     refreshLocks();
     paintSound();
     applyChrome();
@@ -5036,6 +6061,7 @@ function createSettings(cfg, visitOnly, onChange) {
     }
     mix = clone(cfg.fish.speciesDistribution);
     for (const path of SPEC.keys()) paint(path);
+    refreshPlaceLabels();
     refreshLocks();
     paintSound();
     applyChrome();
@@ -5068,20 +6094,178 @@ function createSettings(cfg, visitOnly, onChange) {
     event.stopPropagation();
     commit('audio.enabled', !cfg.audio.enabled);
   });
+
+  const placeDialog = document.createElement('div');
+  placeDialog.className = 'place-dialog';
+  placeDialog.hidden = true;
+  const placeSheet = document.createElement('div');
+  placeSheet.className = 'sheet';
+  placeSheet.setAttribute('role', 'dialog');
+  placeSheet.setAttribute('aria-modal', 'true');
+  const placeTitle = document.createElement('h2');
+  placeTitle.id = 'place-dialog-title';
+  placeTitle.textContent = 'Weather location';
+  placeSheet.setAttribute('aria-labelledby', placeTitle.id);
+  const placeInput = document.createElement('input');
+  placeInput.type = 'text';
+  placeInput.maxLength = 80;
+  placeInput.spellcheck = false;
+  placeInput.autocomplete = 'off';
+  placeInput.placeholder = 'Toledo';
+  placeInput.setAttribute('aria-label', 'Location search');
+  const placeChoices = document.createElement('div');
+  placeChoices.className = 'choices';
+  placeChoices.setAttribute('role', 'listbox');
+  const placeHintLine = document.createElement('p');
+  placeHintLine.className = 'hint';
+  const placeCancel = document.createElement('button');
+  placeCancel.type = 'button';
+  placeCancel.textContent = 'Cancel';
+  const placeActions = document.createElement('div');
+  placeActions.className = 'actions';
+  placeActions.append(placeCancel);
+  const placeSearch = document.createElement('div');
+  placeSearch.className = 'search';
+  placeSearch.append(placeInput, placeChoices, placeHintLine, placeActions);
+  placeSheet.append(placeTitle, placeSearch);
+  placeDialog.append(placeSheet);
+  document.body.append(placeDialog);
+
+  let placeDialogPath = '';
+  let suggestToken = 0;
+  let suggestTimer = 0;
+
+  async function refreshPlaceLabel(path) {
+    const control = controls.get(path);
+    if (!control?.display) return;
+    const query = getPath(cfg, path);
+    try {
+      const place = await resolvePlace(query);
+      if (getPath(cfg, path) !== query) return;
+      control.display.textContent = place.name || query;
+      control.display.title = place.name || query;
+    } catch {
+      if (getPath(cfg, path) !== query) return;
+      control.display.textContent = query;
+      control.display.title = query;
+    }
+  }
+  function refreshPlaceLabels() {
+    for (const path of SPEC.keys()) if (controlKind(path) === 'text') refreshPlaceLabel(path);
+  }
+  function closePlaceDialog() {
+    if (placeDialog.hidden) return false;
+    placeDialog.hidden = true;
+    suggestToken += 1;
+    const opener = controls.get(placeDialogPath)?.input;
+    if (opener) opener.focus();
+    return true;
+  }
+  function selectedChoice() {
+    return placeChoices.querySelector('.place-choice[aria-selected="true"]');
+  }
+  function selectChoice(choiceButton) {
+    for (const choice of placeChoices.querySelectorAll('.place-choice')) {
+      choice.setAttribute('aria-selected', choice === choiceButton ? 'true' : 'false');
+    }
+    choiceButton?.scrollIntoView({ block: 'nearest' });
+  }
+  function chooseListedPlace(choiceButton) {
+    const choice = choiceButton?.placeChoice;
+    if (!choice || !placeDialogPath) return;
+    rememberChoice(choice);
+    if (!commit(placeDialogPath, choice.value)) {
+      note('That place could not be saved');
+      return;
+    }
+    closePlaceDialog();
+  }
+  function renderPlaceChoices(choices) {
+    placeChoices.replaceChildren();
+    for (const choice of choices) {
+      const choiceButton = document.createElement('button');
+      choiceButton.type = 'button';
+      choiceButton.className = 'place-choice';
+      choiceButton.setAttribute('role', 'option');
+      choiceButton.textContent = choice.label;
+      choiceButton.placeChoice = choice;
+      choiceButton.addEventListener('click', () => chooseListedPlace(choiceButton));
+      placeChoices.append(choiceButton);
+    }
+    selectChoice(placeChoices.querySelector('.place-choice'));
+  }
+  async function searchPlaceDialog() {
+    const query = placeInput.value.trim();
+    const token = ++suggestToken;
+    if (query.length < 2) {
+      placeChoices.replaceChildren();
+      placeHintLine.textContent = 'Type a city, such as Toledo';
+      return;
+    }
+    placeHintLine.textContent = 'Searching…';
+    placeChoices.replaceChildren();
+    try {
+      const choices = await suggestPlaces(query);
+      if (token !== suggestToken || placeDialog.hidden) return;
+      renderPlaceChoices(choices);
+      placeHintLine.textContent = choices.length ? 'Choose a place' : 'No matching places';
+    } catch (error) {
+      if (token !== suggestToken || placeDialog.hidden) return;
+      placeChoices.replaceChildren();
+      placeHintLine.textContent = error.message || 'Could not search for that place';
+    }
+  }
+  function openPlaceDialog(path) {
+    placeDialogPath = path;
+    const shown = controls.get(path)?.display?.textContent || getPath(cfg, path);
+    placeInput.value = shown;
+    placeChoices.replaceChildren();
+    placeHintLine.textContent = shown.trim().length < 2 ? 'Type a city, such as Toledo' : 'Searching…';
+    placeDialog.hidden = false;
+    placeInput.focus();
+    placeInput.select();
+    searchPlaceDialog();
+  }
+  placeInput.addEventListener('input', () => {
+    clearTimeout(suggestTimer);
+    suggestTimer = setTimeout(searchPlaceDialog, 250);
+  });
+  placeInput.addEventListener('keydown', (event) => {
+    const buttons = [...placeChoices.querySelectorAll('.place-choice')];
+    const current = buttons.indexOf(selectedChoice());
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      if (!buttons.length) return;
+      event.preventDefault();
+      const step = event.key === 'ArrowDown' ? 1 : -1;
+      selectChoice(buttons[(current + step + buttons.length) % buttons.length]);
+    } else if (event.key === 'Enter') {
+      event.preventDefault();
+      chooseListedPlace(selectedChoice() || buttons[0]);
+    }
+  });
+  placeCancel.addEventListener('click', closePlaceDialog);
+  placeDialog.addEventListener('click', (event) => {
+    if (event.target === placeDialog) closePlaceDialog();
+  });
+
   addEventListener('keydown', (event) => {
     if (event.repeat) return;
     const field = event.target instanceof Element && event.target.closest('input, textarea, select');
+    if (event.code === 'Escape' && closePlaceDialog()) return;
     if (event.code === 'Escape') setPanelOpen(false);
     if (event.code === 'F1') { event.preventDefault(); setPanelOpen(true); }
-    if (field || event.ctrlKey || event.metaKey || event.altKey) return;
+    if (field || event.ctrlKey || event.metaKey || event.altKey || !placeDialog.hidden) return;
     if (event.code === 'KeyH') togglePanel();
     if (event.code === 'KeyM') commit('audio.enabled', !cfg.audio.enabled);
+    if (event.code === 'KeyT') commit('clock.enabled', !cfg.clock.enabled);
+    if (event.code === 'KeyF') commit('weather.enabled', !cfg.weather.enabled);
   });
 
   refreshLocks();
   paintSound();
   applyChrome();
-  return { note };
+  refreshPlaceLabels();
+  return { note, openPlace: openPlaceDialog };
 }
 
 // ---- js/main.js ----
@@ -5095,6 +6279,8 @@ function createSettings(cfg, visitOnly, onChange) {
 //   ?cam=x,y,z,tx,ty,tz     override the camera
 //   ?t=seconds              start the clock at a given time
 //   ?config=<base64 JSON>   or dotted keys such as fish.population=50 (see js/config.js)
+
+
 
 
 
@@ -5777,7 +6963,7 @@ async function main() {
   // presentation: fullscreen on the first interaction, cursor hidden while idle
   const goFullscreen = (event) => {
     const target = event && event.target;
-    if (target instanceof Element && target.closest('#toolbar, #panel')) return;
+    if (target instanceof Element && target.closest('#toolbar, #panel, #weather-widget, .place-dialog')) return;
     if (cfg.display.fullscreen && !document.fullscreenElement && document.documentElement.requestFullscreen) {
       document.documentElement.requestFullscreen().catch(() => {});
     }
@@ -5799,7 +6985,8 @@ async function main() {
     if (!audio) return;
     audio.apply(cfg.audio);
   }
-  createSettings(cfg, visitOnly, (path) => {
+  let widgets = null;
+  const settings = createSettings(cfg, visitOnly, (path) => {
     if (path === 'environment.waterColor') refreshWater();
     if (path === 'camera.fovDegrees') fov = cfg.camera.fovDegrees * Math.PI / 180;
     if (path === 'display.targetFps') { fpsTarget = cfg.display.targetFps; nextDue = 0; }
@@ -5814,6 +7001,19 @@ async function main() {
       clearTimeout(restockTimer);
       restockTimer = setTimeout(restock, 200);
     }
+    if (path.startsWith('clock.')) widgets?.clock.apply();
+    if (path.startsWith('weather.') || path === 'clock.hour24') {
+      widgets?.weather.update(path === 'weather.location' || path === 'weather.unit');
+    }
+  });
+  widgets = {
+    clock: createClock(document.getElementById('clock-widget'), cfg),
+    weather: createWeather(document.getElementById('weather-widget'), cfg, settings.note),
+  };
+  widgets.clock.apply();
+  widgets.weather.update(cfg.weather.enabled);
+  document.getElementById('weather-widget').addEventListener('click', (event) => {
+    if (event.target.closest('.weather-place')) settings.openPlace('weather.location');
   });
   let idleTimer = 0;
   window.addEventListener('pointermove', () => {

@@ -7,7 +7,7 @@ import { clamp, lerp } from './math.js';
 const DEFAULTS = {
   enabled: false,
   volume: 0.35,
-  hissEnabled: true,
+  hissEnabled: false,
   hissVolume: 1,
   hissTone: 0.5,
   bubblesEnabled: true,

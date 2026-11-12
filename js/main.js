@@ -11,6 +11,8 @@
 import { TAU, clamp, lerp, perspective, ortho, lookAt, mat4Mul, mat4Invert, hexToRgb, srgbToLinear } from './math.js';
 import { resolvePopulation } from './config.js';
 import { prepareConfig, createSettings } from './settings.js';
+import { createClock } from './clock.js';
+import { createWeather } from './weather.js';
 import { SPECIES, SPECIES_KEYS } from './species.js';
 import { buildFishMesh, FISH_STRIDE } from './fish-mesh.js';
 import { CORAL_STRIDE, SOFT_TYPES } from './coral-mesh.js';
@@ -691,7 +693,7 @@ async function main() {
   // presentation: fullscreen on the first interaction, cursor hidden while idle
   const goFullscreen = (event) => {
     const target = event && event.target;
-    if (target instanceof Element && target.closest('#toolbar, #panel')) return;
+    if (target instanceof Element && target.closest('#toolbar, #panel, #weather-widget, .place-dialog')) return;
     if (cfg.display.fullscreen && !document.fullscreenElement && document.documentElement.requestFullscreen) {
       document.documentElement.requestFullscreen().catch(() => {});
     }
@@ -713,7 +715,8 @@ async function main() {
     if (!audio) return;
     audio.apply(cfg.audio);
   }
-  createSettings(cfg, visitOnly, (path) => {
+  let widgets = null;
+  const settings = createSettings(cfg, visitOnly, (path) => {
     if (path === 'environment.waterColor') refreshWater();
     if (path === 'camera.fovDegrees') fov = cfg.camera.fovDegrees * Math.PI / 180;
     if (path === 'display.targetFps') { fpsTarget = cfg.display.targetFps; nextDue = 0; }
@@ -728,6 +731,19 @@ async function main() {
       clearTimeout(restockTimer);
       restockTimer = setTimeout(restock, 200);
     }
+    if (path.startsWith('clock.')) widgets?.clock.apply();
+    if (path.startsWith('weather.') || path === 'clock.hour24') {
+      widgets?.weather.update(path === 'weather.location' || path === 'weather.unit');
+    }
+  });
+  widgets = {
+    clock: createClock(document.getElementById('clock-widget'), cfg),
+    weather: createWeather(document.getElementById('weather-widget'), cfg, settings.note),
+  };
+  widgets.clock.apply();
+  widgets.weather.update(cfg.weather.enabled);
+  document.getElementById('weather-widget').addEventListener('click', (event) => {
+    if (event.target.closest('.weather-place')) settings.openPlace('weather.location');
   });
   let idleTimer = 0;
   window.addEventListener('pointermove', () => {

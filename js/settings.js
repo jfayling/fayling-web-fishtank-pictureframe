@@ -4,6 +4,7 @@
 // stored. URL overrides (?s=, ?config=, dotted keys, ?info=1) are applied on top.
 import { DEFAULT_CONFIG, deepMerge, loadConfig, resolvePopulation } from './config.js';
 import { SPECIES, SPECIES_KEYS } from './species.js';
+import { acceptedPlace, rememberChoice, resolvePlace, suggestPlaces } from './place.js';
 
 const SETTINGS_KEY = 'fishtank-settings-v1';
 
@@ -70,6 +71,61 @@ const SECTIONS = [
       ['audio.bubblePlink', 'Plink', 0, 1, 0.01],
     ] },
   ] },
+  { title: 'Widgets', groups: [
+    { title: 'Clock', groups: [
+      { title: 'Display', settings: [
+        ['clock.enabled', 'Clock', 'toggle', 'On', 'Off'],
+        ['clock.hour24', '24-hour time', 'toggle', 'On', 'Off'],
+        ['clock.seconds', 'Show seconds', 'toggle', 'Show', 'Hide'],
+        ['clock.date', 'Show date', 'toggle', 'Show', 'Hide'],
+      ] },
+      { title: 'Appearance', settings: [
+        ['clock.style', 'Style', 'select', [
+          ['modern', 'Modern'],
+          ['mono', 'Monospace'],
+          ['classic', 'Classic'],
+        ]],
+        ['clock.position', 'Position', 'select', [
+          ['top-left', 'Top left'],
+          ['top-center', 'Top center'],
+          ['top-right', 'Top right'],
+          ['bottom-left', 'Bottom left'],
+          ['bottom-center', 'Bottom center'],
+          ['bottom-right', 'Bottom right'],
+        ]],
+        ['clock.size', 'Size (px)', 32, 144, 1],
+        ['clock.color', 'Color', 'color'],
+        ['clock.opacity', 'Opacity', 0.2, 1, 0.01],
+        ['clock.background', 'Background', 0, 0.8, 0.01],
+      ] },
+    ] },
+    { title: 'Weather', groups: [
+      { title: 'Location and updates', settings: [
+        ['weather.enabled', 'Weather widget', 'toggle', 'Show', 'Hide'],
+        ['weather.location', 'Location', 'text', 'Lisbon, Portugal'],
+        ['weather.refresh', 'Refresh (minutes)', 5, 60, 5],
+        ['weather.unit', 'Units', 'select', [
+          ['fahrenheit', 'Fahrenheit / mph'],
+          ['celsius', 'Celsius / km/h'],
+        ]],
+        ['weather.position', 'Position', 'select', [
+          ['top-left', 'Top left'],
+          ['top-right', 'Top right'],
+          ['bottom-left', 'Bottom left'],
+          ['bottom-right', 'Bottom right'],
+        ]],
+      ] },
+      { title: 'Information', settings: [
+        ['weather.temperature', 'Current temperature', 'toggle', 'Show', 'Hide'],
+        ['weather.feels', 'Feels like', 'toggle', 'Show', 'Hide'],
+        ['weather.precipitation', 'Precipitation', 'toggle', 'Show', 'Hide'],
+        ['weather.humidity', 'Humidity', 'toggle', 'Show', 'Hide'],
+        ['weather.wind', 'Wind', 'toggle', 'Show', 'Hide'],
+        ['weather.forecast', 'Next 3 hours', 'toggle', 'Show', 'Hide'],
+        ['weather.alerts', 'U.S. weather alerts', 'toggle', 'Show', 'Hide'],
+      ] },
+    ] },
+  ] },
 ];
 
 const SPEC = new Map();
@@ -118,6 +174,8 @@ function coerce(spec, raw) {
   if (!spec) return undefined;
   if (spec[2] === 'toggle') return booleanSetting(raw);
   if (spec[2] === 'color') return typeof raw === 'string' && /^#[0-9a-f]{6}$/i.test(raw) ? raw.toLowerCase() : undefined;
+  if (spec[2] === 'select') return spec[3].some((option) => option[0] === raw) ? raw : undefined;
+  if (spec[2] === 'text') return acceptedPlace(raw) || undefined;
   const n = typeof raw === 'number' ? raw : Number(raw);
   if (!Number.isFinite(n)) return undefined;
   return Math.min(spec[3], Math.max(spec[2], n));
@@ -186,7 +244,14 @@ export function prepareConfig(search = location.search) {
   if (packed && hasPath(packed, 'fish.population')) populationFromUrl = true;
   if (packed && hasPath(packed, 'fish.speciesDistribution')) speciesFromUrl = true;
   if (url.get('info') === '1') { cfg.display.showInfo = true; visitOnly.add('display.showInfo'); }
-  if (url.has('shot')) { cfg.display.showButtons = false; visitOnly.add('display.showButtons'); }
+  if (url.has('shot')) {
+    cfg.display.showButtons = false;
+    cfg.clock.enabled = false;
+    cfg.weather.enabled = false;
+    visitOnly.add('display.showButtons');
+    visitOnly.add('clock.enabled');
+    visitOnly.add('weather.enabled');
+  }
   // ?fish.population=50 scales the mix. A URL that names species instead is the mix itself.
   if (speciesFromUrl && !populationFromUrl) cfg.fish.population = Object.values(cfg.fish.speciesDistribution).reduce((a, b) => a + b, 0);
   settleFish(cfg);
@@ -272,7 +337,8 @@ export function createSettings(cfg, visitOnly, onChange) {
     if (control.kind === 'bool') {
       control.input.checked = value;
       control.output.textContent = value ? control.onText : control.offText;
-    } else if (control.kind === 'color') control.input.value = value;
+    } else if (control.kind === 'color' || control.kind === 'select') control.input.value = value;
+    else if (control.kind === 'text') control.input.value = value;
     else {
       control.input.value = String(value);
       control.output.textContent = control.input.value;
@@ -334,6 +400,7 @@ export function createSettings(cfg, visitOnly, onChange) {
     } else {
       setPath(cfg, path, value);
       paint(path);
+      if (controlKind(path) === 'text') refreshPlaceLabel(path);
     }
     refreshLocks();
     paintSound();
@@ -397,6 +464,53 @@ export function createSettings(cfg, visitOnly, onChange) {
     parent.appendChild(row);
     controls.set(path, { input: inp, output: val, row, kind: 'bool', onText, offText });
   }
+  function addSelect(parent, path, label, options) {
+    const row = document.createElement('label');
+    row.className = 'select';
+    const name = document.createElement('span'); name.textContent = label;
+    const inp = document.createElement('select');
+    for (const [value, text] of options) {
+      const option = document.createElement('option');
+      option.value = value;
+      option.textContent = text;
+      inp.appendChild(option);
+    }
+    inp.value = getPath(cfg, path);
+    inp.addEventListener('change', () => commit(path, inp.value));
+    row.append(name, inp);
+    parent.appendChild(row);
+    controls.set(path, { input: inp, row, kind: 'select' });
+  }
+  function addPlace(parent, path, label) {
+    const row = document.createElement('div');
+    row.className = 'place';
+    const name = document.createElement('span');
+    name.textContent = label;
+    const display = document.createElement('span');
+    display.className = 'place-value';
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'place-pick';
+    button.textContent = '...';
+    button.setAttribute('aria-haspopup', 'dialog');
+    button.setAttribute('aria-label', `Choose ${label.toLowerCase()}`);
+    button.addEventListener('click', () => openPlaceDialog(path));
+    let stored = getPath(cfg, path);
+    display.textContent = stored;
+    display.title = stored;
+    Object.defineProperty(button, 'value', {
+      configurable: true,
+      get() { return stored; },
+      set(next) {
+        stored = String(next ?? '');
+        display.textContent = stored;
+        display.title = stored;
+      },
+    });
+    row.append(name, display, button);
+    parent.appendChild(row);
+    controls.set(path, { input: button, display, row, kind: 'text' });
+  }
   function addColor(parent, path, label) {
     const row = document.createElement('label');
     row.className = 'color';
@@ -409,9 +523,17 @@ export function createSettings(cfg, visitOnly, onChange) {
     parent.appendChild(row);
     controls.set(path, { input: inp, row, kind: 'color' });
   }
+  function controlKind(path) {
+    const kind = SPEC.get(path)?.[2];
+    if (kind === 'toggle') return 'bool';
+    if (kind === 'color' || kind === 'select' || kind === 'text') return kind;
+    return kind == null ? '' : 'number';
+  }
   function addSetting(host, setting) {
     if (setting[2] === 'toggle') addToggle(host, setting[0], setting[1], setting[3], setting[4]);
+    else if (setting[2] === 'select') addSelect(host, setting[0], setting[1], setting[3]);
     else if (setting[2] === 'color') addColor(host, setting[0], setting[1]);
+    else if (setting[2] === 'text') addPlace(host, setting[0], setting[1]);
     else addSlider(host, ...setting);
   }
   function addGroups(parent, groups, kind) {
@@ -435,6 +557,8 @@ export function createSettings(cfg, visitOnly, onChange) {
       ['Esc', 'Close settings'],
       ['H', 'Show or hide settings'],
       ['M', 'Turn sound on or off'],
+      ['T', 'Show or hide the clock'],
+      ['F', 'Show or hide the weather'],
     ]) {
       const term = document.createElement('dt'); term.textContent = key;
       const detail = document.createElement('dd'); detail.textContent = action;
@@ -516,6 +640,7 @@ export function createSettings(cfg, visitOnly, onChange) {
     mix = clone(cfg.fish.speciesDistribution);
     settleFish(cfg);
     for (const path of SPEC.keys()) paint(path);
+    refreshPlaceLabels();
     refreshLocks();
     paintSound();
     applyChrome();
@@ -531,6 +656,7 @@ export function createSettings(cfg, visitOnly, onChange) {
     }
     mix = clone(cfg.fish.speciesDistribution);
     for (const path of SPEC.keys()) paint(path);
+    refreshPlaceLabels();
     refreshLocks();
     paintSound();
     applyChrome();
@@ -563,18 +689,176 @@ export function createSettings(cfg, visitOnly, onChange) {
     event.stopPropagation();
     commit('audio.enabled', !cfg.audio.enabled);
   });
+
+  const placeDialog = document.createElement('div');
+  placeDialog.className = 'place-dialog';
+  placeDialog.hidden = true;
+  const placeSheet = document.createElement('div');
+  placeSheet.className = 'sheet';
+  placeSheet.setAttribute('role', 'dialog');
+  placeSheet.setAttribute('aria-modal', 'true');
+  const placeTitle = document.createElement('h2');
+  placeTitle.id = 'place-dialog-title';
+  placeTitle.textContent = 'Weather location';
+  placeSheet.setAttribute('aria-labelledby', placeTitle.id);
+  const placeInput = document.createElement('input');
+  placeInput.type = 'text';
+  placeInput.maxLength = 80;
+  placeInput.spellcheck = false;
+  placeInput.autocomplete = 'off';
+  placeInput.placeholder = 'Toledo';
+  placeInput.setAttribute('aria-label', 'Location search');
+  const placeChoices = document.createElement('div');
+  placeChoices.className = 'choices';
+  placeChoices.setAttribute('role', 'listbox');
+  const placeHintLine = document.createElement('p');
+  placeHintLine.className = 'hint';
+  const placeCancel = document.createElement('button');
+  placeCancel.type = 'button';
+  placeCancel.textContent = 'Cancel';
+  const placeActions = document.createElement('div');
+  placeActions.className = 'actions';
+  placeActions.append(placeCancel);
+  const placeSearch = document.createElement('div');
+  placeSearch.className = 'search';
+  placeSearch.append(placeInput, placeChoices, placeHintLine, placeActions);
+  placeSheet.append(placeTitle, placeSearch);
+  placeDialog.append(placeSheet);
+  document.body.append(placeDialog);
+
+  let placeDialogPath = '';
+  let suggestToken = 0;
+  let suggestTimer = 0;
+
+  async function refreshPlaceLabel(path) {
+    const control = controls.get(path);
+    if (!control?.display) return;
+    const query = getPath(cfg, path);
+    try {
+      const place = await resolvePlace(query);
+      if (getPath(cfg, path) !== query) return;
+      control.display.textContent = place.name || query;
+      control.display.title = place.name || query;
+    } catch {
+      if (getPath(cfg, path) !== query) return;
+      control.display.textContent = query;
+      control.display.title = query;
+    }
+  }
+  function refreshPlaceLabels() {
+    for (const path of SPEC.keys()) if (controlKind(path) === 'text') refreshPlaceLabel(path);
+  }
+  function closePlaceDialog() {
+    if (placeDialog.hidden) return false;
+    placeDialog.hidden = true;
+    suggestToken += 1;
+    const opener = controls.get(placeDialogPath)?.input;
+    if (opener) opener.focus();
+    return true;
+  }
+  function selectedChoice() {
+    return placeChoices.querySelector('.place-choice[aria-selected="true"]');
+  }
+  function selectChoice(choiceButton) {
+    for (const choice of placeChoices.querySelectorAll('.place-choice')) {
+      choice.setAttribute('aria-selected', choice === choiceButton ? 'true' : 'false');
+    }
+    choiceButton?.scrollIntoView({ block: 'nearest' });
+  }
+  function chooseListedPlace(choiceButton) {
+    const choice = choiceButton?.placeChoice;
+    if (!choice || !placeDialogPath) return;
+    rememberChoice(choice);
+    if (!commit(placeDialogPath, choice.value)) {
+      note('That place could not be saved');
+      return;
+    }
+    closePlaceDialog();
+  }
+  function renderPlaceChoices(choices) {
+    placeChoices.replaceChildren();
+    for (const choice of choices) {
+      const choiceButton = document.createElement('button');
+      choiceButton.type = 'button';
+      choiceButton.className = 'place-choice';
+      choiceButton.setAttribute('role', 'option');
+      choiceButton.textContent = choice.label;
+      choiceButton.placeChoice = choice;
+      choiceButton.addEventListener('click', () => chooseListedPlace(choiceButton));
+      placeChoices.append(choiceButton);
+    }
+    selectChoice(placeChoices.querySelector('.place-choice'));
+  }
+  async function searchPlaceDialog() {
+    const query = placeInput.value.trim();
+    const token = ++suggestToken;
+    if (query.length < 2) {
+      placeChoices.replaceChildren();
+      placeHintLine.textContent = 'Type a city, such as Toledo';
+      return;
+    }
+    placeHintLine.textContent = 'Searching…';
+    placeChoices.replaceChildren();
+    try {
+      const choices = await suggestPlaces(query);
+      if (token !== suggestToken || placeDialog.hidden) return;
+      renderPlaceChoices(choices);
+      placeHintLine.textContent = choices.length ? 'Choose a place' : 'No matching places';
+    } catch (error) {
+      if (token !== suggestToken || placeDialog.hidden) return;
+      placeChoices.replaceChildren();
+      placeHintLine.textContent = error.message || 'Could not search for that place';
+    }
+  }
+  function openPlaceDialog(path) {
+    placeDialogPath = path;
+    const shown = controls.get(path)?.display?.textContent || getPath(cfg, path);
+    placeInput.value = shown;
+    placeChoices.replaceChildren();
+    placeHintLine.textContent = shown.trim().length < 2 ? 'Type a city, such as Toledo' : 'Searching…';
+    placeDialog.hidden = false;
+    placeInput.focus();
+    placeInput.select();
+    searchPlaceDialog();
+  }
+  placeInput.addEventListener('input', () => {
+    clearTimeout(suggestTimer);
+    suggestTimer = setTimeout(searchPlaceDialog, 250);
+  });
+  placeInput.addEventListener('keydown', (event) => {
+    const buttons = [...placeChoices.querySelectorAll('.place-choice')];
+    const current = buttons.indexOf(selectedChoice());
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      if (!buttons.length) return;
+      event.preventDefault();
+      const step = event.key === 'ArrowDown' ? 1 : -1;
+      selectChoice(buttons[(current + step + buttons.length) % buttons.length]);
+    } else if (event.key === 'Enter') {
+      event.preventDefault();
+      chooseListedPlace(selectedChoice() || buttons[0]);
+    }
+  });
+  placeCancel.addEventListener('click', closePlaceDialog);
+  placeDialog.addEventListener('click', (event) => {
+    if (event.target === placeDialog) closePlaceDialog();
+  });
+
   addEventListener('keydown', (event) => {
     if (event.repeat) return;
     const field = event.target instanceof Element && event.target.closest('input, textarea, select');
+    if (event.code === 'Escape' && closePlaceDialog()) return;
     if (event.code === 'Escape') setPanelOpen(false);
     if (event.code === 'F1') { event.preventDefault(); setPanelOpen(true); }
-    if (field || event.ctrlKey || event.metaKey || event.altKey) return;
+    if (field || event.ctrlKey || event.metaKey || event.altKey || !placeDialog.hidden) return;
     if (event.code === 'KeyH') togglePanel();
     if (event.code === 'KeyM') commit('audio.enabled', !cfg.audio.enabled);
+    if (event.code === 'KeyT') commit('clock.enabled', !cfg.clock.enabled);
+    if (event.code === 'KeyF') commit('weather.enabled', !cfg.weather.enabled);
   });
 
   refreshLocks();
   paintSound();
   applyChrome();
-  return { note };
+  refreshPlaceLabels();
+  return { note, openPlace: openPlaceDialog };
 }

@@ -65,7 +65,7 @@ export const DEFAULT_CONFIG = {
   audio: {
     enabled: false,          // optional ambient aquarium sound; silent by default
     volume: 0.35,            // master level
-    hissEnabled: true,       // airstone / filter-return hiss
+    hissEnabled: false,      // airstone / filter-return hiss; off until turned on
     hissVolume: 1,           // 1 = the designed hiss level; can be pushed past 1
     hissTone: 0.5,           // 0 = darker, 1 = brighter air
     bubblesEnabled: true,    // surface bubble pops
@@ -73,6 +73,36 @@ export const DEFAULT_CONFIG = {
     bubbleRate: 1,           // 0 = silent, 1 = a steady stream, higher = denser
     bubblePitch: 0.5,        // 0 = larger, lower pops; 1 = tiny high ticks
     bubblePlink: 0.35,       // how often a pop has a glassy ring
+  },
+
+  // Overlay widgets, matching fayling-web-ocean-pictureframe. The weather location is a
+  // city ("Lisbon, Portugal") or a 5-digit US ZIP code.
+  clock: {
+    enabled: true,
+    hour24: false,
+    seconds: false,
+    date: true,
+    style: 'modern',         // modern | mono | classic
+    size: 72,
+    color: '#ffffff',
+    position: 'top-center',  // top/bottom + left/center/right
+    opacity: 0.9,
+    background: 0.18,
+  },
+
+  weather: {
+    enabled: true,
+    location: '30265',
+    refresh: 15,             // minutes between forecasts
+    unit: 'fahrenheit',      // fahrenheit | celsius
+    position: 'bottom-left', // corner of the screen
+    temperature: true,
+    feels: true,
+    precipitation: true,
+    humidity: true,
+    wind: true,
+    forecast: true,
+    alerts: true,            // active U.S. National Weather Service alerts
   },
 
   assets: {

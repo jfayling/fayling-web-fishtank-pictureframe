@@ -13,7 +13,7 @@ import { fileURLToPath } from 'node:url';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const wgslModules = ['js/wgsl/common.js', 'js/wgsl/fish.js', 'js/wgsl/scene.js', 'js/wgsl/fx.js', 'js/wgsl/post.js'];
-const appModules = ['js/math.js', 'js/config.js', 'js/species.js', 'js/fish-mesh.js', 'js/coral-mesh.js', 'js/reef.js', 'js/behavior.js', 'js/gltf.js', 'js/audio.js', 'js/settings.js'];
+const appModules = ['js/math.js', 'js/config.js', 'js/species.js', 'js/fish-mesh.js', 'js/coral-mesh.js', 'js/reef.js', 'js/behavior.js', 'js/gltf.js', 'js/audio.js', 'js/place.js', 'js/clock.js', 'js/weather.js', 'js/settings.js'];
 const order = [...wgslModules, ...appModules, 'js/main.js'];
 const stripModuleSyntax = (src) => src
   .replace(/^import[\s\S]*?from\s+['"][^'"]+['"];\s*$/gm, '')                 // drop imports

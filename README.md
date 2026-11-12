@@ -27,8 +27,8 @@ All tunables live in `js/config.js` (`DEFAULT_CONFIG`): display (size, target FP
 resolution), environment (water colour, clarity, ambient light, caustics, current, light
 rays, bloom, exposure), fish (population, speed, schooling, collision avoidance, species
 distribution), effects (bubbles, particles, rays, coral sway, particle count), camera
-(optional slow pan, field of view), audio (off by default; master, hiss, and bubble
-layers) and optional per-species models.
+(optional slow pan, field of view), audio (off by default; master and bubble
+layers, with hiss off until it is turned on), clock and weather widgets, and optional per-species models.
 The simulation and renderer only read this object.
 
 Any key can be overridden from the URL, for example
@@ -37,10 +37,16 @@ JSON document can be passed as `?config=<base64url JSON>`. The population is dis
 across species in proportion to `speciesDistribution` (at most one moray).
 
 The on-screen settings panel follows the ocean picture frame: a dim **Settings** button
-(F1 or H), sections for the tank, fish, effects, camera and sound, and Export, Import,
-Share link and Reset. Changes apply immediately and are remembered in this browser. Sound
-toggles with the toolbar button or M, and Esc closes the panel. `?info=1` shows the
-frame-rate readout for that visit.
+(F1 or H), sections for the tank, fish, effects, camera, sound and widgets, and Export,
+Import, Share link and Reset. Changes apply immediately and are remembered in this browser.
+Sound toggles with the toolbar button or M. T shows or hides the clock, and F shows or
+hides the weather. Esc closes the panel, or the location search when that is open.
+`?info=1` shows the frame-rate readout for that visit.
+
+The clock and weather card match the ocean picture frame. The clock can sit on any edge,
+in a modern, monospace, or classic face. Weather uses a city or a 5-digit US ZIP code
+(open the card's place name, or Settings → Widgets → Weather), and shows the current
+conditions, the next three hours, and active U.S. weather alerts. Both are on by default.
 
 Development options: `?info=1` (frame-rate readout), `?view=lineup` (every species side by
 side), `?cam=x,y,z,tx,ty,tz` (camera override), `?t=seconds`, `?w=&h=` (forced size).
@@ -56,6 +62,9 @@ side), `?cam=x,y,z,tx,ty,tz` (camera override), `?t=seconds`, `?w=&h=` (forced s
 | `js/behavior.js` | `FishEntity` and the `Aquarium` simulation: state machine (cruising, exploring, hovering, turning, avoiding, schooling, seeking shelter, resting), steering forces, spatial hash, hard collision constraints |
 | `js/wgsl/*` | Shaders: fish deformation and colour patterns, rock/sand/coral materials, caustics, shadows, water absorption and fog, particles, bubbles, light shafts, bloom and AgX tone mapping |
 | `js/gltf.js` | GLB/glTF import for replacing procedural fish with authored models |
+| `js/place.js` | City, postal-code, and coordinate lookup for the weather location |
+| `js/clock.js` | Clock overlay: face, size, color, and screen position |
+| `js/weather.js` | Weather card: Open-Meteo forecast and U.S. weather alerts |
 | `js/main.js` | WebGPU setup, render passes, frame loop, adaptive quality |
 
 **Fish.** Each fish has its own position, velocity, heading, preferred depth and speed,
