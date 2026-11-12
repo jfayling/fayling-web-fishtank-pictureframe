@@ -27,7 +27,8 @@ All tunables live in `js/config.js` (`DEFAULT_CONFIG`): display (size, target FP
 resolution), environment (water colour, clarity, ambient light, caustics, current, light
 rays, bloom, exposure), fish (population, speed, schooling, collision avoidance, species
 distribution), effects (bubbles, particles, rays, coral sway, particle count), camera
-(optional slow pan, field of view), audio (off by default) and optional per-species models.
+(optional slow pan, field of view), audio (off by default; master, hiss, and bubble
+layers) and optional per-species models.
 The simulation and renderer only read this object.
 
 Any key can be overridden from the URL, for example

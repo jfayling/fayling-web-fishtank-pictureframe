@@ -52,10 +52,24 @@ const SECTIONS = [
     ['camera.movementSpeed', 'Pan speed', 0, 3, 0.05],
     ['camera.fovDegrees', 'Field of view', 20, 50, 1],
   ] }] },
-  { title: 'Sound', groups: [{ settings: [
-    ['audio.enabled', 'Playback', 'toggle', 'On', 'Off'],
-    ['audio.volume', 'Volume', 0, 1, 0.01],
-  ] }] },
+  { title: 'Sound', groups: [
+    { settings: [
+      ['audio.enabled', 'Playback', 'toggle', 'On', 'Off'],
+      ['audio.volume', 'Master volume', 0, 1, 0.01],
+    ] },
+    { title: 'Hiss', settings: [
+      ['audio.hissEnabled', 'Enable', 'toggle', 'On', 'Off'],
+      ['audio.hissVolume', 'Volume', 0, 2, 0.01],
+      ['audio.hissTone', 'Tone', 0, 1, 0.01],
+    ] },
+    { title: 'Bubbles', settings: [
+      ['audio.bubblesEnabled', 'Enable', 'toggle', 'On', 'Off'],
+      ['audio.bubbleVolume', 'Volume', 0, 2, 0.01],
+      ['audio.bubbleRate', 'Rate', 0, 3, 0.05],
+      ['audio.bubblePitch', 'Pitch', 0, 1, 0.01],
+      ['audio.bubblePlink', 'Plink', 0, 1, 0.01],
+    ] },
+  ] },
 ];
 
 const SPEC = new Map();
@@ -271,7 +285,16 @@ export function createSettings(cfg, visitOnly, onChange) {
     control.row.classList.toggle('disabled', locked);
   }
   function refreshLocks() {
-    lock('audio.volume', !cfg.audio.enabled);
+    const quiet = !cfg.audio.enabled;
+    lock('audio.volume', quiet);
+    lock('audio.hissEnabled', quiet);
+    lock('audio.hissVolume', quiet || !cfg.audio.hissEnabled);
+    lock('audio.hissTone', quiet || !cfg.audio.hissEnabled);
+    lock('audio.bubblesEnabled', quiet);
+    lock('audio.bubbleVolume', quiet || !cfg.audio.bubblesEnabled);
+    lock('audio.bubbleRate', quiet || !cfg.audio.bubblesEnabled);
+    lock('audio.bubblePitch', quiet || !cfg.audio.bubblesEnabled);
+    lock('audio.bubblePlink', quiet || !cfg.audio.bubblesEnabled);
     lock('camera.movementSpeed', !cfg.camera.movementEnabled);
     lock('effects.particleCount', !cfg.effects.particlesEnabled);
     lock('environment.lightRayIntensity', !cfg.effects.lightRaysEnabled);

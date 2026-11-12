@@ -64,7 +64,15 @@ export const DEFAULT_CONFIG = {
 
   audio: {
     enabled: false,          // optional ambient aquarium sound; silent by default
-    volume: 0.35,
+    volume: 0.35,            // master level
+    hissEnabled: true,       // airstone / filter-return hiss
+    hissVolume: 1,           // 1 = the designed hiss level; can be pushed past 1
+    hissTone: 0.5,           // 0 = darker, 1 = brighter air
+    bubblesEnabled: true,    // surface bubble pops
+    bubbleVolume: 1,
+    bubbleRate: 1,           // 0 = silent, 1 = a steady stream, higher = denser
+    bubblePitch: 0.5,        // 0 = larger, lower pops; 1 = tiny high ticks
+    bubblePlink: 0.35,       // how often a pop has a glassy ring
   },
 
   assets: {

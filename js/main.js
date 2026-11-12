@@ -519,7 +519,7 @@ async function main() {
   // Frame loop
   // ------------------------------------------------------------------------------------
   const hud = document.getElementById('hud');
-  let audio = cfg.audio.enabled ? createAquariumAudio(cfg.audio.volume) : null;
+  let audio = cfg.audio.enabled ? createAquariumAudio(cfg.audio) : null;
   let time = Number(qs.get('t')) || 0, last = performance.now(), lastShown = 0, frameNo = 0, fade = SHOT ? 1 : 0;
   let shooting = false, hudTimer = 0, hudFrames = 0, cpuMs = 0, nextDue = 0;
   const curVec = { x: 0, y: 0, z: 0 };
@@ -709,10 +709,9 @@ async function main() {
     sim.spawn(dist);
   }
   function applyAudio() {
-    if (!audio && cfg.audio.enabled) audio = createAquariumAudio(cfg.audio.volume);
+    if (!audio && cfg.audio.enabled) audio = createAquariumAudio(cfg.audio);
     if (!audio) return;
-    audio.setVolume(cfg.audio.volume);
-    audio.setEnabled(cfg.audio.enabled);
+    audio.apply(cfg.audio);
   }
   createSettings(cfg, visitOnly, (path) => {
     if (path === 'environment.waterColor') refreshWater();
