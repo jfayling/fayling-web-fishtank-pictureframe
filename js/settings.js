@@ -3,6 +3,7 @@
 // and "reset" round-trip the same values. Only values that differ from the defaults are
 // stored. URL overrides (?s=, ?config=, dotted keys, ?info=1) are applied on top.
 import { DEFAULT_CONFIG, deepMerge, loadConfig, resolvePopulation } from './config.js';
+import { SCENES, SCENE_FIELDS, sceneById, sceneValueEqual, copyScene } from './scenes.js';
 import { SPECIES, SPECIES_KEYS } from './species.js';
 import { acceptedPlace, rememberChoice, resolvePlace, suggestPlaces } from './place.js';
 
@@ -23,6 +24,10 @@ const SECTIONS = [
     ['display.minRenderScale', 'Minimum scale', 0.35, 1, 0.05],
   ] }] },
   { title: 'Tank', groups: [{ settings: [
+    ['environment.scene', 'Scene', 'select', [
+      ...SCENES.map((scene) => [scene.id, scene.name]),
+      ['custom', 'Custom'],
+    ]],
     ['environment.waterColor', 'Water color', 'color'],
     ['environment.waterClarity', 'Clarity', 0.3, 2, 0.01],
     ['environment.ambientLightIntensity', 'Ambient light', 0, 2, 0.01],
@@ -137,6 +142,15 @@ function eachSetting(groups, visit) {
 }
 for (const section of SECTIONS) eachSetting(section.groups, (setting) => SPEC.set(setting[0], setting));
 
+// Sun colour and direction travel with a scene. They persist, and they are not sliders.
+const LIGHT_SPEC = new Map([
+  ['environment.sunColor', ['environment.sunColor', 'Sun color', 'color']],
+  ['environment.sunIntensity', ['environment.sunIntensity', 'Sun intensity', 0, 4, 0.01]],
+  ['environment.lightX', ['environment.lightX', 'Light x', -2, 2, 0.01]],
+  ['environment.lightY', ['environment.lightY', 'Light y', 0.05, 2, 0.01]],
+  ['environment.lightZ', ['environment.lightZ', 'Light z', -2, 2, 0.01]],
+]);
+
 const clone = (v) => JSON.parse(JSON.stringify(v));
 const partsOf = (path) => path.split('.');
 export function getPath(obj, path) {
@@ -208,20 +222,23 @@ function encodeBase64Url(text) {
 export function prepareConfig(search = location.search) {
   const cfg = clone(DEFAULT_CONFIG);
   const visitOnly = new Set();
+  const explicit = new Set();
   const url = new URLSearchParams(search);
-  applyDocument(cfg, readStorage());
+  applyDocument(cfg, readStorage(), null, explicit);
   if (url.has('s')) {
     const shared = decodeBase64Url(url.get('s'));
     if (shared && typeof shared === 'object' && !Array.isArray(shared)) {
+      explicit.clear();
       for (const path of SPEC.keys()) setPath(cfg, path, getPath(DEFAULT_CONFIG, path));
-      applyDocument(cfg, shared);
+      for (const path of LIGHT_SPEC.keys()) setPath(cfg, path, getPath(DEFAULT_CONFIG, path));
+      applyDocument(cfg, shared, null, explicit);
     }
   }
   let packed = null;
   if (url.has('config')) {
     try { packed = JSON.parse(atob(url.get('config').replace(/-/g, '+').replace(/_/g, '/'))); }
     catch { /* ignored; loadConfig reports it when used directly */ }
-    applyDocument(cfg, packed, visitOnly);
+    applyDocument(cfg, packed, visitOnly, explicit);
   }
   // dotted keys that are not panel settings (models, and anything added later)
   const urlCfg = loadConfig(search);
@@ -229,11 +246,13 @@ export function prepareConfig(search = location.search) {
   let populationFromUrl = false;
   for (const [key, value] of url) {
     if (!key.includes('.')) continue;
-    if (SPEC.has(key)) {
-      const coerced = coerce(SPEC.get(key), value);
+    const spec = SPEC.get(key) || LIGHT_SPEC.get(key);
+    if (spec) {
+      const coerced = coerce(spec, value);
       if (coerced === undefined) continue;
       setPath(cfg, key, coerced);
       visitOnly.add(key);
+      explicit.add(key);
       if (key === 'fish.population') populationFromUrl = true;
       if (key.startsWith('fish.speciesDistribution.')) speciesFromUrl = true;
     } else {
@@ -254,6 +273,15 @@ export function prepareConfig(search = location.search) {
   }
   // ?fish.population=50 scales the mix. A URL that names species instead is the mix itself.
   if (speciesFromUrl && !populationFromUrl) cfg.fish.population = Object.values(cfg.fish.speciesDistribution).reduce((a, b) => a + b, 0);
+  if (url.has('scene') && !visitOnly.has('environment.scene')) {
+    const id = String(url.get('scene') || '').trim().toLowerCase();
+    if (id === 'custom' || sceneById(id)) {
+      cfg.environment.scene = id;
+      explicit.add('environment.scene');
+      visitOnly.add('environment.scene');
+    }
+  }
+  reconcileScene(cfg, explicit, visitOnly);
   settleFish(cfg);
   return { cfg, visitOnly };
 }
@@ -270,21 +298,49 @@ function settleFish(cfg) {
   cfg.fish.population = Object.values(counts).reduce((a, b) => a + b, 0);
 }
 
-function applyDocument(cfg, data, locked) {
-  if (!data) return;
-  for (const path of SPEC.keys()) {
+function applyKnown(cfg, data, spec, locked, explicit) {
+  for (const path of spec.keys()) {
     let raw;
     if (Object.hasOwn(data, path)) raw = data[path];
     else if (hasPath(data, path)) raw = getPath(data, path);
     else continue;
-    const value = coerce(SPEC.get(path), raw);
+    const value = coerce(spec.get(path), raw);
     if (value === undefined) continue;
     setPath(cfg, path, value);
     if (locked) locked.add(path);
+    if (explicit) explicit.add(path);
   }
+}
+function applyDocument(cfg, data, locked, explicit) {
+  if (!data) return;
+  applyKnown(cfg, data, SPEC, locked, explicit);
+  applyKnown(cfg, data, LIGHT_SPEC, locked, explicit);
   // seed and model paths are not panel settings, but a settings file may carry them
   if (Number.isFinite(Number(data.seed))) cfg.seed = Number(data.seed);
   if (data.assets && typeof data.assets === 'object') deepMerge(cfg.assets, data.assets);
+}
+
+// A named scene fills any look it owns that this visit did not set itself. A saved tank
+// that predates scenes, or a hand-edited color, stays put and shows as Custom.
+function reconcileScene(cfg, explicit, visitOnly) {
+  if (!explicit.has('environment.scene')) {
+    const edited = SCENE_FIELDS.some(([, path]) => explicit.has(path)
+      && !sceneValueEqual(getPath(cfg, path), getPath(DEFAULT_CONFIG, path)));
+    if (edited) {
+      cfg.environment.scene = 'custom';
+      return;
+    }
+  }
+  const scene = sceneById(cfg.environment.scene);
+  if (!scene) return;
+  const preview = visitOnly.has('environment.scene');
+  for (const [key, path] of SCENE_FIELDS) {
+    if (preview) {
+      if (visitOnly.has(path)) continue;
+      setPath(cfg, path, scene[key]);
+      visitOnly.add(path);
+    } else if (!explicit.has(path)) setPath(cfg, path, scene[key]);
+  }
 }
 
 export function createSettings(cfg, visitOnly, onChange) {
@@ -295,6 +351,7 @@ export function createSettings(cfg, visitOnly, onChange) {
   // proportions behind the population slider; species edits replace one entry
   let mix = clone(cfg.fish.speciesDistribution);
   let shareUrlInput = null;
+  let sceneNote = 0;
 
   function setPanelOpen(open) {
     panel.classList.toggle('hidden', !open);
@@ -311,6 +368,11 @@ export function createSettings(cfg, visitOnly, onChange) {
   function snapshot() {
     const changed = {};
     for (const path of SPEC.keys()) {
+      if (visitOnly.has(path)) continue;
+      const value = getPath(cfg, path);
+      if (value !== getPath(DEFAULT_CONFIG, path)) setPath(changed, path, value);
+    }
+    for (const path of LIGHT_SPEC.keys()) {
       if (visitOnly.has(path)) continue;
       const value = getPath(cfg, path);
       if (value !== getPath(DEFAULT_CONFIG, path)) setPath(changed, path, value);
@@ -372,6 +434,40 @@ export function createSettings(cfg, visitOnly, onChange) {
     button.classList.toggle('on', on);
     button.textContent = on ? 'Sound on' : 'Sound off';
   }
+  function paintScene() {
+    const button = document.getElementById('scene');
+    const scene = sceneById(cfg.environment.scene);
+    const name = scene ? scene.name : 'Custom';
+    button.textContent = name;
+    button.title = `${name}. Next scene (]), previous ([)`;
+    button.setAttribute('aria-label', `Scene, ${name}. Activate for the next scene`);
+  }
+  function showSceneLabel() {
+    const el = document.getElementById('scene-label');
+    const scene = sceneById(cfg.environment.scene);
+    el.textContent = scene ? scene.name : 'Custom';
+    el.setAttribute('aria-hidden', 'false');
+    el.classList.add('show');
+    clearTimeout(sceneNote);
+    sceneNote = setTimeout(() => {
+      el.classList.remove('show');
+      el.setAttribute('aria-hidden', 'true');
+    }, 2400);
+  }
+  function syncSceneChoice() {
+    const matched = SCENES.find((scene) => SCENE_FIELDS.every(([key, field]) => sceneValueEqual(getPath(cfg, field), scene[key])));
+    const id = matched ? matched.id : 'custom';
+    if (id === cfg.environment.scene) return;
+    cfg.environment.scene = id;
+    visitOnly.delete('environment.scene');
+    paint('environment.scene');
+  }
+  function cycleScene(step) {
+    const ids = SCENES.map((scene) => scene.id);
+    let index = ids.indexOf(cfg.environment.scene);
+    if (index < 0) index = step > 0 ? -1 : 0;
+    commit('environment.scene', ids[(index + step + ids.length) % ids.length]);
+  }
   function applyChrome() {
     document.getElementById('hud').style.display = cfg.display.showInfo ? 'block' : 'none';
     document.getElementById('toolbar').style.display = cfg.display.showButtons ? '' : 'none';
@@ -384,7 +480,19 @@ export function createSettings(cfg, visitOnly, onChange) {
     const value = coerce(spec, raw);
     if (value === undefined) return false;
     visitOnly.delete(path);
-    if (path === 'fish.population') {
+    let announceScene = false;
+    if (path === 'environment.scene') {
+      setPath(cfg, path, value);
+      if (value !== 'custom') {
+        copyScene(cfg, value);
+        for (const [, field] of SCENE_FIELDS) {
+          visitOnly.delete(field);
+          paint(field);
+        }
+      }
+      paint(path);
+      announceScene = true;
+    } else if (path === 'fish.population') {
       cfg.fish.population = value;
       cfg.fish.speciesDistribution = clone(mix);
       settleFish(cfg);
@@ -402,11 +510,18 @@ export function createSettings(cfg, visitOnly, onChange) {
       paint(path);
       if (controlKind(path) === 'text') refreshPlaceLabel(path);
     }
+    if (path !== 'environment.scene' && SCENE_FIELDS.some(([, field]) => field === path)) {
+      syncSceneChoice();
+      visitOnly.delete('environment.scene');
+      for (const [, field] of SCENE_FIELDS) visitOnly.delete(field);
+    }
     refreshLocks();
     paintSound();
+    paintScene();
     applyChrome();
     remember();
     onChange(path);
+    if (announceScene && panel.classList.contains('hidden')) showSceneLabel();
     return true;
   }
 
@@ -556,6 +671,8 @@ export function createSettings(cfg, visitOnly, onChange) {
       ['F1', 'Show settings'],
       ['Esc', 'Close settings'],
       ['H', 'Show or hide settings'],
+      [']', 'Next scene'],
+      ['[', 'Previous scene'],
       ['M', 'Turn sound on or off'],
       ['T', 'Show or hide the clock'],
       ['F', 'Show or hide the weather'],
@@ -615,6 +732,7 @@ export function createSettings(cfg, visitOnly, onChange) {
   function exportSettings() {
     const exported = {};
     for (const path of SPEC.keys()) setPath(exported, path, getPath(cfg, path));
+    for (const path of LIGHT_SPEC.keys()) setPath(exported, path, getPath(cfg, path));
     const blob = new Blob([JSON.stringify(exported, null, 2) + '\n'], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -627,22 +745,30 @@ export function createSettings(cfg, visitOnly, onChange) {
     if (!data || typeof data !== 'object' || Array.isArray(data)) { note('Settings file must be a JSON object'); return; }
     let count = 0;
     const fish = [];
-    for (const path of SPEC.keys()) {
-      const raw = Object.hasOwn(data, path) ? data[path] : hasPath(data, path) ? getPath(data, path) : undefined;
-      if (raw === undefined) continue;
-      const value = coerce(SPEC.get(path), raw);
-      if (value === undefined) continue;
-      visitOnly.delete(path);
-      setPath(cfg, path, value);
-      count++;
-      if (path.startsWith('fish.')) fish.push(path);
+    const present = new Set();
+    function take(specMap) {
+      for (const path of specMap.keys()) {
+        const raw = Object.hasOwn(data, path) ? data[path] : hasPath(data, path) ? getPath(data, path) : undefined;
+        if (raw === undefined) continue;
+        const value = coerce(specMap.get(path), raw);
+        if (value === undefined) continue;
+        visitOnly.delete(path);
+        setPath(cfg, path, value);
+        present.add(path);
+        count++;
+        if (path.startsWith('fish.')) fish.push(path);
+      }
     }
+    take(SPEC);
+    take(LIGHT_SPEC);
+    if (present.has('environment.scene')) copyScene(cfg, cfg.environment.scene, present);
     mix = clone(cfg.fish.speciesDistribution);
     settleFish(cfg);
     for (const path of SPEC.keys()) paint(path);
     refreshPlaceLabels();
     refreshLocks();
     paintSound();
+    paintScene();
     applyChrome();
     remember();
     for (const path of SPEC.keys()) if (!path.startsWith('fish.')) onChange(path);
@@ -654,11 +780,16 @@ export function createSettings(cfg, visitOnly, onChange) {
       visitOnly.delete(path);
       setPath(cfg, path, getPath(DEFAULT_CONFIG, path));
     }
+    for (const path of LIGHT_SPEC.keys()) {
+      visitOnly.delete(path);
+      setPath(cfg, path, getPath(DEFAULT_CONFIG, path));
+    }
     mix = clone(cfg.fish.speciesDistribution);
     for (const path of SPEC.keys()) paint(path);
     refreshPlaceLabels();
     refreshLocks();
     paintSound();
+    paintScene();
     applyChrome();
     remember();
     for (const path of SPEC.keys()) onChange(path);
@@ -688,6 +819,10 @@ export function createSettings(cfg, visitOnly, onChange) {
   document.getElementById('sound').addEventListener('click', (event) => {
     event.stopPropagation();
     commit('audio.enabled', !cfg.audio.enabled);
+  });
+  document.getElementById('scene').addEventListener('click', (event) => {
+    event.stopPropagation();
+    cycleScene(event.shiftKey ? -1 : 1);
   });
 
   const placeDialog = document.createElement('div');
@@ -851,6 +986,10 @@ export function createSettings(cfg, visitOnly, onChange) {
     if (event.code === 'F1') { event.preventDefault(); setPanelOpen(true); }
     if (field || event.ctrlKey || event.metaKey || event.altKey || !placeDialog.hidden) return;
     if (event.code === 'KeyH') togglePanel();
+    if (event.code === 'BracketRight' || event.code === 'BracketLeft') {
+      event.preventDefault();
+      cycleScene(event.code === 'BracketRight' ? 1 : -1);
+    }
     if (event.code === 'KeyM') commit('audio.enabled', !cfg.audio.enabled);
     if (event.code === 'KeyT') commit('clock.enabled', !cfg.clock.enabled);
     if (event.code === 'KeyF') commit('weather.enabled', !cfg.weather.enabled);
@@ -858,6 +997,7 @@ export function createSettings(cfg, visitOnly, onChange) {
 
   refreshLocks();
   paintSound();
+  paintScene();
   applyChrome();
   refreshPlaceLabels();
   return { note, openPlace: openPlaceDialog };

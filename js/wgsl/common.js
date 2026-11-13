@@ -1,7 +1,7 @@
 // Shared WGSL: the per-frame uniform block, noise, caustics, shadows, water absorption and
 // fog, and the underwater lighting model. Shadow-pass shaders get only the uniform block.
 
-export const FRAME_FLOATS = 104;
+export const FRAME_FLOATS = 108;
 export const SHADOW_SIZE = 2048;
 
 const FRAME = /* wgsl */ `
@@ -19,6 +19,7 @@ struct Frame {
   screen: vec4f,     // w, h, 1/h, projection y scale
   drift: vec4f,      // xyz accumulated current displacement (wrapped), w unused
   src: array<vec4f, 6>, // bubble sources: xyz, w = enabled
+  sun: vec4f,        // rgb linear sun colour; intensity is lightDir.w
 };
 @group(0) @binding(0) var<uniform> F: Frame;
 `;
@@ -137,7 +138,7 @@ fn shadowAt(P: vec3f, N: vec3f, px: vec2f) -> f32 {
   return select(1.0, s / 12.0, inside);
 }
 
-fn sunColor() -> vec3f { return vec3f(1.0, 0.97, 0.9) * F.lightDir.w; }
+fn sunColor() -> vec3f { return F.sun.rgb * F.lightDir.w; }
 
 // Light lost on the way down from the surface (red goes first).
 fn depthAttenuation(y: f32) -> vec3f {

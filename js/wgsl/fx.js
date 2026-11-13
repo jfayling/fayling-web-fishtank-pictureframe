@@ -169,11 +169,14 @@ fn shaft(q: vec3f, t: f32) -> f32 {
     acc += vis * shaft(q, t) * att;
   }
   acc *= dt;
-  // mild forward scattering towards the light
+  // mild forward scattering towards the light. Day keeps the cyan water scatter; a
+  // coloured sun (sunset, moonlight) tints the shafts toward that sun.
   let g = 0.45;
   let mu = dot(rd, F.lightDir.xyz);
   let phase = (1.0 - g * g) / pow(1.0 + g * g - 2.0 * g * mu, 1.5) * 0.25 + 0.15;
-  let col = acc * phase * sunColor() * mix(vec3f(0.55, 0.85, 0.95), vec3f(1.0), 0.35) * F.params.y * 0.035;
+  let scatter = mix(vec3f(0.55, 0.85, 0.95), vec3f(1.0), 0.35);
+  let tint = mix(scatter, vec3f(1.0), saturate(distance(F.sun.rgb, vec3f(1.0, 0.97, 0.9)) * 2.2));
+  let col = acc * phase * sunColor() * tint * F.params.y * 0.035;
   return vec4f(col, 0.0);
 }
 `;

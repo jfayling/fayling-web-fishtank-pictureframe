@@ -20,6 +20,11 @@
   #sound::before { content: '♪'; display: inline-block; width: 16px; opacity: .7; }
   #sound.on, #settings.on { border-color: #e2a04eaa; opacity: 1; }
   #sound.on::before { opacity: 1; }
+  #scene-label { position: fixed; left: 50%; bottom: 28px; z-index: 2; transform: translateX(-50%);
+                 padding: 7px 14px; border: 1px solid #e5e1d822; border-radius: 8px; background: #0b0f1488;
+                 color: #e5e1d8; font: 13px/1.3 system-ui, sans-serif; letter-spacing: .04em; white-space: nowrap;
+                 backdrop-filter: blur(6px); pointer-events: none; opacity: 0; transition: opacity .45s ease; }
+  #scene-label.show { opacity: .9; }
   #panel { position: fixed; z-index: 3; right: 12px; top: 50px; width: 330px; max-height: calc(100vh - 60px);
            display: flex; flex-direction: column; overflow: hidden; border-radius: 8px;
            background: #0b0f14c8; backdrop-filter: blur(6px); color: #e5e1d8; font: 12px/1.3 system-ui, sans-serif; }
@@ -179,9 +184,11 @@
 <canvas id="c"></canvas>
 <div id="hud"></div>
 <div id="toolbar">
+  <button id="scene" type="button" title="Next scene (])">Day reef</button>
   <button id="sound" type="button" aria-pressed="false" title="Toggle aquarium audio (M)">Sound off</button>
   <button id="settings" type="button" aria-expanded="false" title="Show settings (F1)">Settings</button>
 </div>
+<div id="scene-label" aria-live="polite" aria-hidden="true"></div>
 <div id="panel" class="hidden">
   <div class="panel-bar">
     <span>Settings</span>
@@ -200,7 +207,7 @@
 // Shared WGSL: the per-frame uniform block, noise, caustics, shadows, water absorption and
 // fog, and the underwater lighting model. Shadow-pass shaders get only the uniform block.
 
-const FRAME_FLOATS = 104;
+const FRAME_FLOATS = 108;
 const SHADOW_SIZE = 2048;
 
 const FRAME = /* wgsl */ `
@@ -218,6 +225,7 @@ struct Frame {
   screen: vec4f,     // w, h, 1/h, projection y scale
   drift: vec4f,      // xyz accumulated current displacement (wrapped), w unused
   src: array<vec4f, 6>, // bubble sources: xyz, w = enabled
+  sun: vec4f,        // rgb linear sun colour; intensity is lightDir.w
 };
 @group(0) @binding(0) var<uniform> F: Frame;
 `;
@@ -336,7 +344,7 @@ fn shadowAt(P: vec3f, N: vec3f, px: vec2f) -> f32 {
   return select(1.0, s / 12.0, inside);
 }
 
-fn sunColor() -> vec3f { return vec3f(1.0, 0.97, 0.9) * F.lightDir.w; }
+fn sunColor() -> vec3f { return F.sun.rgb * F.lightDir.w; }
 
 // Light lost on the way down from the surface (red goes first).
 fn depthAttenuation(y: f32) -> vec3f {
@@ -1515,11 +1523,14 @@ fn shaft(q: vec3f, t: f32) -> f32 {
     acc += vis * shaft(q, t) * att;
   }
   acc *= dt;
-  // mild forward scattering towards the light
+  // mild forward scattering towards the light. Day keeps the cyan water scatter; a
+  // coloured sun (sunset, moonlight) tints the shafts toward that sun.
   let g = 0.45;
   let mu = dot(rd, F.lightDir.xyz);
   let phase = (1.0 - g * g) / pow(1.0 + g * g - 2.0 * g * mu, 1.5) * 0.25 + 0.15;
-  let col = acc * phase * sunColor() * mix(vec3f(0.55, 0.85, 0.95), vec3f(1.0), 0.35) * F.params.y * 0.035;
+  let scatter = mix(vec3f(0.55, 0.85, 0.95), vec3f(1.0), 0.35);
+  let tint = mix(scatter, vec3f(1.0), saturate(distance(F.sun.rgb, vec3f(1.0, 0.97, 0.9)) * 2.2));
+  let col = acc * phase * sunColor() * tint * F.params.y * 0.035;
   return vec4f(col, 0.0);
 }
 `;
@@ -1853,6 +1864,7 @@ const srgbToLinear = (c) => (c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1
 // Aquarium configuration. Rendering and behavior code only read this object; nothing in the
 // simulation hard-codes these values. Override any key from the URL for development, e.g.
 //   ?fish.population=50&effects.bubblesEnabled=false&environment.waterClarity=0.7
+//   ?scene=sunset
 // or pass a whole JSON document as ?config=<base64url JSON>.
 
 const DEFAULT_CONFIG = {
@@ -1869,6 +1881,7 @@ const DEFAULT_CONFIG = {
   },
 
   environment: {
+    scene: 'reef',         // reef | lagoon | morning | sunset | moonlight | deep | custom
     waterColor: '#0b5f8c',
     waterClarity: 1.0,     // 1 = clear reef tank; lower is hazier
     ambientLightIntensity: 1.0,
@@ -1877,6 +1890,12 @@ const DEFAULT_CONFIG = {
     lightRayIntensity: 1.0,
     bloom: 0.05,
     exposure: 1.0,
+    // Sun colour and direction. Scenes set these; they are not separate panel sliders.
+    sunColor: '#fffbf3',
+    sunIntensity: 2.4,
+    lightX: 0.22,
+    lightY: 1,
+    lightZ: 0.3,
   },
 
   fish: {
@@ -1909,7 +1928,7 @@ const DEFAULT_CONFIG = {
   },
 
   camera: {
-    movementEnabled: false,  // optional, almost imperceptible pan across the reef
+    movementEnabled: false,  // slow sweep across the reef; off until turned on
     movementSpeed: 1.0,
     fovDegrees: 32,
   },
@@ -2024,6 +2043,165 @@ function resolvePopulation(cfg) {
   for (let i = 0; assigned < target && i < rema.length * 4; i++) { out[rema[i % rema.length][1]]++; assigned++; }
   if (out.morayEel > 1) out.morayEel = 1;
   return out;
+}
+
+// ---- js/scenes.js ----
+// Named looks for the tank. A scene sets the water and the sun, and (except Day reef
+// and Custom) a different rock and coral layout. Day reef is the original reef.
+
+const SCENE_FIELDS = [
+  ['waterColor', 'environment.waterColor'],
+  ['waterClarity', 'environment.waterClarity'],
+  ['ambientLightIntensity', 'environment.ambientLightIntensity'],
+  ['causticIntensity', 'environment.causticIntensity'],
+  ['currentStrength', 'environment.currentStrength'],
+  ['lightRayIntensity', 'environment.lightRayIntensity'],
+  ['bloom', 'environment.bloom'],
+  ['exposure', 'environment.exposure'],
+  ['sunColor', 'environment.sunColor'],
+  ['sunIntensity', 'environment.sunIntensity'],
+  ['lightX', 'environment.lightX'],
+  ['lightY', 'environment.lightY'],
+  ['lightZ', 'environment.lightZ'],
+  ['lightRays', 'effects.lightRaysEnabled'],
+];
+
+const SCENES = [
+  {
+    id: 'reef',
+    name: 'Day reef',
+    waterColor: '#0b5f8c',
+    waterClarity: 1,
+    ambientLightIntensity: 1,
+    causticIntensity: 1,
+    currentStrength: 1,
+    lightRayIntensity: 1,
+    bloom: 0.05,
+    exposure: 1,
+    sunColor: '#fffbf3',
+    sunIntensity: 2.4,
+    lightX: 0.22,
+    lightY: 1,
+    lightZ: 0.3,
+    lightRays: true,
+  },
+  {
+    id: 'lagoon',
+    name: 'Lagoon',
+    waterColor: '#128e9c',
+    waterClarity: 1.35,
+    ambientLightIntensity: 1.15,
+    causticIntensity: 1.65,
+    currentStrength: 0.6,
+    lightRayIntensity: 0.7,
+    bloom: 0.06,
+    exposure: 1.1,
+    sunColor: '#fff6e4',
+    sunIntensity: 2.7,
+    lightX: 0.06,
+    lightY: 1,
+    lightZ: 0.1,
+    lightRays: true,
+  },
+  {
+    id: 'morning',
+    name: 'Morning',
+    waterColor: '#1d6f96',
+    waterClarity: 1.05,
+    ambientLightIntensity: 0.95,
+    causticIntensity: 0.8,
+    currentStrength: 0.7,
+    lightRayIntensity: 1.4,
+    bloom: 0.09,
+    exposure: 1.02,
+    sunColor: '#ffc396',
+    sunIntensity: 2.05,
+    lightX: 0.7,
+    lightY: 0.5,
+    lightZ: 0.22,
+    lightRays: true,
+  },
+  {
+    id: 'sunset',
+    name: 'Sunset',
+    waterColor: '#163e62',
+    waterClarity: 0.9,
+    ambientLightIntensity: 0.6,
+    causticIntensity: 0.35,
+    currentStrength: 0.45,
+    lightRayIntensity: 1.7,
+    bloom: 0.16,
+    exposure: 1.08,
+    sunColor: '#ff7a2e',
+    sunIntensity: 2.35,
+    lightX: 0.95,
+    lightY: 0.36,
+    lightZ: 0.16,
+    lightRays: true,
+  },
+  {
+    id: 'moonlight',
+    name: 'Moonlight',
+    waterColor: '#0c2344',
+    waterClarity: 0.85,
+    ambientLightIntensity: 0.5,
+    causticIntensity: 0.2,
+    currentStrength: 0.3,
+    lightRayIntensity: 0.4,
+    bloom: 0.1,
+    exposure: 0.95,
+    sunColor: '#b7d0ff',
+    sunIntensity: 1.15,
+    lightX: 0.42,
+    lightY: 0.85,
+    lightZ: 0.18,
+    lightRays: true,
+  },
+  {
+    id: 'deep',
+    name: 'Deep water',
+    waterColor: '#042430',
+    waterClarity: 0.55,
+    ambientLightIntensity: 0.45,
+    causticIntensity: 0.08,
+    currentStrength: 0.2,
+    lightRayIntensity: 0.15,
+    bloom: 0.03,
+    exposure: 0.9,
+    sunColor: '#6aadc4',
+    sunIntensity: 0.75,
+    lightX: 0.04,
+    lightY: 1,
+    lightZ: 0.02,
+    lightRays: true,
+  },
+];
+
+function sceneById(id) {
+  return SCENES.find((scene) => scene.id === id);
+}
+
+function sceneValueEqual(a, b) {
+  if (typeof a === 'number' && typeof b === 'number') return Math.abs(a - b) < 1e-4;
+  return a === b;
+}
+
+function assignScenePath(obj, path, value) {
+  const parts = path.split('.');
+  let o = obj;
+  for (let i = 0; i < parts.length - 1; i++) o = o[parts[i]];
+  o[parts.at(-1)] = value;
+}
+
+// skip is a set of paths to leave alone (a file or URL named them itself).
+function copyScene(cfg, id, skip) {
+  const scene = sceneById(id);
+  if (!scene) return false;
+  for (const [key, path] of SCENE_FIELDS) {
+    if (skip && skip.has(path)) continue;
+    assignScenePath(cfg, path, scene[key]);
+  }
+  return true;
 }
 
 // ---- js/species.js ----
@@ -3096,7 +3274,8 @@ const yawAxes = (yaw) => {
   return [[c, 0, -s], [0, 1, 0], [s, 0, c]];
 };
 
-function layoutRock(rng) {
+function layoutRock(rng, style) {
+  if (style) return layoutStyled(rng, style);
   const blobs = [];
   const massif = (cx, cz, rx, rz, h, count, smin, smax, flat = 1) => {
     // grounded base layer
@@ -3148,6 +3327,159 @@ function layoutRock(rng) {
   return { blobs, tunnels, moray: { inner: [5.7, 0.95, -3.45], outer: [3.35, 0.82, -0.5] } };
 }
 
+// Same blob scatter as the classic reef, aimed by a scene's massif list.
+function layoutStyled(rng, style) {
+  const blobs = [];
+  const massif = (cx, cz, rx, rz, h, count, smin, smax, flat = 1) => {
+    const baseN = Math.ceil(count * 0.3);
+    for (let k = 0; k < baseN; k++) {
+      const a = rng.next() * TAU, rr = Math.sqrt(rng.next()) * 0.85;
+      const s = smax * (0.9 + rng.next() * 0.4);
+      blobs.push({ x: cx + Math.cos(a) * rr * rx, y: 0.05 + rng.next() * 0.25, z: cz + Math.sin(a) * rr * rz,
+        rx: s * 1.2, ry: s * 0.6, rz: s * 1.05, yaw: rng.next() * TAU });
+    }
+    for (let k = 0; k < count; k++) {
+      const a = rng.next() * TAU, rr = Math.sqrt(rng.next());
+      const fall = 1 - rr * rr * 0.75;
+      const y = Math.pow(rng.next(), 0.75) * h * fall;
+      const s = lerp(smax, smin, y / h) * (0.7 + rng.next() * 0.5);
+      blobs.push({ x: cx + Math.cos(a) * rr * rx, y, z: cz + Math.sin(a) * rr * rz,
+        rx: s * (1 + rng.next() * 0.5), ry: s * (0.55 + rng.next() * 0.45) * flat, rz: s * (0.85 + rng.next() * 0.4), yaw: rng.next() * TAU });
+    }
+  };
+  for (const m of style.massifs) massif(...m);
+  for (const b of style.blobs) blobs.push(b);
+  return { blobs, tunnels: style.tunnels, moray: style.moray };
+}
+
+// Rock arrangements for every scene except Day reef, which keeps the original layout.
+// massifs: cx, cz, rx, rz, height, blob count, small, large, optional flatness.
+// Each one keeps a moray cave and rocks under the anemones.
+const FORMATIONS = {
+  lagoon: {
+    seed: 12011,
+    massifs: [
+      [-6.2, -2.2, 1.6, 1.3, 1.5, 28, 0.3, 0.7, 0.75],
+      [-1.5, -3.4, 1.8, 1.4, 1.35, 26, 0.28, 0.65, 0.7],
+      [3.2, -2.0, 1.5, 1.2, 1.45, 24, 0.28, 0.7, 0.75],
+      [7.0, -3.3, 1.8, 1.5, 1.6, 22, 0.3, 0.75, 0.7],
+      [0.4, -5.6, 3.2, 1.1, 1.2, 30, 0.35, 0.7, 0.65],
+    ],
+    blobs: [
+      { x: -4.2, y: 0.35, z: -1.7, rx: 0.8, ry: 0.4, rz: 0.65, yaw: 0.4 },
+      { x: 1.1, y: 0.4, z: -1.85, rx: 0.75, ry: 0.38, rz: 0.6, yaw: 1.1 },
+      { x: 5.4, y: 0.35, z: -1.6, rx: 0.7, ry: 0.36, rz: 0.55, yaw: 0.2 },
+      { x: -7.2, y: 0.7, z: -2.4, rx: 1.5, ry: 0.9, rz: 1.4, yaw: 0.6 },
+    ],
+    tunnels: [
+      { a: [-6.2, 0.55, -1.3], b: [-8.0, 0.7, -3.3], r: 0.32 },
+    ],
+    moray: { inner: [-8.0, 0.7, -3.3], outer: [-6.2, 0.55, -1.3] },
+    anemones: [[-4.2, -1.55, 1.15], [1.1, -1.7, 1.2], [5.4, -1.45, 1.05]],
+    coral: { staghorn: 8, fan: 3, brain: 16, leather: 6, plate: 6, finger: 8, bubble: 6, staghorn2: 4, finger2: 6, brain2: 10, mushrooms: 16, sandBrain: 6, stones: 80, shells: 40 },
+  },
+  morning: {
+    seed: 33407,
+    massifs: [
+      [-5.5, -2.6, 2.4, 1.6, 2.2, 40, 0.32, 0.85],
+      [0.2, -2.3, 2.8, 1.5, 1.8, 44, 0.3, 0.8, 0.85],
+      [5.8, -2.7, 2.3, 1.6, 2.4, 40, 0.32, 0.9],
+      [0, -5.2, 5.5, 1.2, 2.8, 48, 0.4, 1.0, 0.9],
+      [-3.2, -1.15, 0.7, 0.4, 0.6, 6, 0.2, 0.35],
+    ],
+    blobs: [
+      { x: -2.2, y: 0.5, z: -1.6, rx: 0.85, ry: 0.45, rz: 0.7, yaw: 0.3 },
+      { x: 2.4, y: 0.55, z: -1.7, rx: 0.8, ry: 0.42, rz: 0.65, yaw: 1.2 },
+      { x: 6.6, y: 0.5, z: -1.9, rx: 0.75, ry: 0.4, rz: 0.6, yaw: 0.5 },
+      { x: -6.8, y: 1.1, z: -2.5, rx: 1.6, ry: 1.15, rz: 1.5, yaw: 0.4 },
+      { x: 0.2, y: 1.7, z: -2.5, rx: 1.6, ry: 0.35, rz: 0.55, yaw: 0.1 },
+    ],
+    tunnels: [
+      { a: [-5.6, 0.7, -1.2], b: [-7.6, 0.9, -3.5], r: 0.34 },
+      { a: [-1.2, 1.15, -2.0], b: [1.4, 1.2, -3.2], r: 0.42 },
+    ],
+    moray: { inner: [-7.6, 0.9, -3.5], outer: [-5.6, 0.7, -1.2] },
+    anemones: [[-2.2, -1.45, 1.2], [2.4, -1.55, 1.15], [6.6, -1.75, 1.05]],
+    coral: { staghorn: 26, fan: 6, brain: 8, leather: 8, plate: 8, finger: 20, bubble: 6, staghorn2: 14, finger2: 12, brain2: 6, mushrooms: 8 },
+  },
+  sunset: {
+    seed: 55103,
+    massifs: [
+      [-7.4, -2.8, 1.8, 1.6, 3.6, 36, 0.4, 1.05],
+      [6.2, -2.6, 2.4, 1.8, 4.2, 52, 0.4, 1.15],
+      [2.0, -5.4, 2.2, 1.2, 3.2, 28, 0.4, 0.95],
+      [-1.0, -1.2, 0.5, 0.4, 0.5, 5, 0.2, 0.35],
+    ],
+    blobs: [
+      { x: 5.4, y: 1.15, z: -2.3, rx: 1.8, ry: 1.35, rz: 1.7, yaw: 0.3 },
+      { x: -6.5, y: 2.4, z: -2.2, rx: 1.3, ry: 0.4, rz: 0.7, yaw: -0.3 },
+      { x: -3.4, y: 0.45, z: -1.7, rx: 0.8, ry: 0.42, rz: 0.65, yaw: 0.8 },
+      { x: 1.6, y: 0.4, z: -2.4, rx: 0.7, ry: 0.38, rz: 0.6, yaw: 0.2 },
+      { x: 8.2, y: 0.55, z: -1.8, rx: 0.75, ry: 0.4, rz: 0.6, yaw: 1.0 },
+    ],
+    tunnels: [
+      { a: [4.2, 0.9, -0.7], b: [6.4, 1.05, -3.5], r: 0.32 },
+      { a: [5.5, 2.3, -1.2], b: [6.6, 2.4, -3.2], r: 0.48 },
+      { a: [-6.0, 1.5, -1.3], b: [-7.2, 1.6, -3.4], r: 0.4 },
+    ],
+    moray: { inner: [6.4, 1.05, -3.5], outer: [4.2, 0.9, -0.7] },
+    anemones: [[-3.4, -1.55, 1.1], [1.6, -2.2, 1.15], [8.2, -1.65, 1.0]],
+    coral: { staghorn: 10, fan: 14, brain: 8, leather: 6, plate: 18, finger: 8, bubble: 5, staghorn2: 4, finger2: 4, brain2: 4, mushrooms: 6 },
+  },
+  moonlight: {
+    seed: 77213,
+    massifs: [
+      [0, -4.3, 6.5, 1.3, 3.4, 55, 0.4, 1.05, 0.95],
+      [-7.6, -2.6, 1.7, 1.8, 2.8, 32, 0.35, 0.95],
+      [7.6, -2.6, 1.7, 1.8, 2.6, 32, 0.35, 0.95],
+      [-2.2, -1.3, 0.7, 0.45, 0.7, 6, 0.2, 0.4],
+      [2.6, -1.25, 0.65, 0.4, 0.65, 6, 0.2, 0.38],
+    ],
+    blobs: [
+      { x: -5.5, y: 1.0, z: -2.6, rx: 1.6, ry: 1.2, rz: 1.5, yaw: 0.5 },
+      { x: 0.2, y: 2.15, z: -3.6, rx: 1.5, ry: 0.4, rz: 0.7, yaw: 0.15 },
+      { x: -2.4, y: 0.45, z: -1.55, rx: 0.8, ry: 0.4, rz: 0.65, yaw: 0.6 },
+      { x: 2.8, y: 0.42, z: -1.5, rx: 0.75, ry: 0.38, rz: 0.6, yaw: 1.1 },
+      { x: -7.0, y: 0.5, z: -1.8, rx: 0.7, ry: 0.36, rz: 0.55, yaw: 0.2 },
+    ],
+    tunnels: [
+      { a: [-4.4, 0.75, -1.2], b: [-6.4, 0.9, -3.6], r: 0.32 },
+      { a: [0.2, 1.3, -2.6], b: [0.2, 1.35, -5.4], r: 0.55 },
+    ],
+    moray: { inner: [-6.4, 0.9, -3.6], outer: [-4.4, 0.75, -1.2] },
+    anemones: [[-2.4, -1.4, 1.1], [2.8, -1.35, 1.15], [-7.0, -1.65, 0.95]],
+    coral: { staghorn: 8, fan: 8, brain: 10, leather: 14, plate: 10, finger: 8, bubble: 14, staghorn2: 4, finger2: 4, brain2: 6, mushrooms: 8 },
+  },
+  deep: {
+    seed: 99041,
+    massifs: [
+      [-6.8, -3.0, 1.5, 2.4, 4.4, 48, 0.45, 1.2],
+      [6.8, -3.0, 1.5, 2.4, 4.2, 48, 0.45, 1.15],
+      [0, -7.2, 3, 1.2, 3.5, 24, 0.5, 1.1],
+      [-2.4, -1.4, 0.45, 0.35, 0.4, 4, 0.18, 0.3],
+    ],
+    blobs: [
+      { x: -6.2, y: 1.2, z: -2.5, rx: 1.7, ry: 1.3, rz: 1.6, yaw: 0.4 },
+      { x: -1.5, y: 0.35, z: -2.2, rx: 0.65, ry: 0.32, rz: 0.5, yaw: 0.7 },
+      { x: 1.8, y: 0.32, z: -2.6, rx: 0.6, ry: 0.3, rz: 0.5, yaw: 0.2 },
+      { x: 6.4, y: 0.45, z: -1.7, rx: 0.7, ry: 0.35, rz: 0.55, yaw: 1.0 },
+    ],
+    tunnels: [
+      { a: [-4.8, 0.85, -0.9], b: [-7.2, 1.05, -3.8], r: 0.34 },
+      { a: [-6.5, 2.4, -1.5], b: [-7.2, 2.5, -4.2], r: 0.42 },
+    ],
+    moray: { inner: [-7.2, 1.05, -3.8], outer: [-4.8, 0.85, -0.9] },
+    anemones: [[-1.5, -2.05, 1.0], [1.8, -2.4, 0.95], [6.4, -1.55, 1.05]],
+    coral: { staghorn: 6, fan: 6, brain: 6, leather: 4, plate: 8, finger: 5, bubble: 4, staghorn2: 3, finger2: 3, brain2: 3, mushrooms: 4, stones: 220, shells: 40 },
+  },
+};
+
+function reefSpec(sceneId, configSeed) {
+  const style = FORMATIONS[sceneId];
+  if (!style) return { key: 'reef:' + configSeed, seed: configSeed, formation: null };
+  return { key: sceneId + ':' + style.seed, seed: style.seed, formation: sceneId };
+}
+
 const PALETTES = {
   staghorn: [['#a98bb8', '#e7dcef'], ['#c9b596', '#f0e8d6'], ['#7f9a8a', '#bfe0e3'], ['#9c7c62', '#e6cfae'], ['#8d7fb6', '#b5d6ea']],
   brain: [['#7b6a3f', '#a9c08a'], ['#8a5a3c', '#d9b98a'], ['#5f7a55', '#c7d6a0'], ['#6c5a7a', '#bfa7c9'], ['#9a7b45', '#7fb0a6']],
@@ -3164,7 +3496,8 @@ const PALETTES = {
 const lin = (hex) => hexToRgb(hex).map(srgbToLinear);
 
 // ---- construction -------------------------------------------------------------------------
-function buildReef(seed) {
+function buildReef(seed, formation) {
+  const style = formation ? FORMATIONS[formation] : null;
   const t0 = performance.now();
   const rng = new Rng(seed);
   const noise = makeNoise(seed);
@@ -3199,7 +3532,7 @@ function buildReef(seed) {
     }
   }
 
-  const layout = layoutRock(rng);
+  const layout = layoutRock(rng, style);
   for (const b of layout.blobs) {
     const [ax, ay, az] = yawAxes(b.yaw);
     field.splat(b.x, b.y, b.z, ax, ay, az, b.rx / 0.7071, b.ry / 0.7071, b.rz / 0.7071, 1, warp);
@@ -3248,7 +3581,7 @@ function buildReef(seed) {
   // ---- corals ---------------------------------------------------------------------------
   const obstacle = new Field(X0, Y0, Z0, h, nx, ny, nz);
   obstacle.data.set(field.data);
-  const corals = placeCorals(rng, rock, field, obstacle, sandHeight);
+  const corals = placeCorals(rng, rock, field, obstacle, sandHeight, style);
 
   // ---- cave for the moray -------------------------------------------------------------
   const m = layout.moray;
@@ -3424,7 +3757,7 @@ function buildSand(sandHeight, field) {
 }
 
 // ---- coral placement ------------------------------------------------------------------------
-function placeCorals(rng, rock, field, obstacle, sandHeight) {
+function placeCorals(rng, rock, field, obstacle, sandHeight, style) {
   const variants = {};   // type name -> [mesh, ...]
   const VCOUNT = { staghorn: 4, brain: 3, mushroom: 3, plate: 3, fan: 3, leather: 3, bubble: 2, anemone: 2, finger: 3, stone: 5, shell: 3 };
   for (const [name, n] of Object.entries(VCOUNT)) {
@@ -3487,6 +3820,14 @@ function placeCorals(rng, rock, field, obstacle, sandHeight) {
     }
   }
   const upish = (k) => (n) => basis([n[0] * k, n[1] * k + (1 - k), n[2] * k], [Math.cos(rng.next() * TAU), 0, Math.sin(rng.next() * TAU)]);
+  const n = {
+    staghorn: 18, fan: 9, brain: 12, leather: 9, plate: 13, finger: 15, bubble: 8,
+    staghorn2: 10, finger2: 10, brain2: 8, mushrooms: 10, sandBrain: 2, stones: 170, shells: 70,
+  };
+  if (style && style.coral) Object.assign(n, style.coral);
+  const anemoneSpots = style && style.anemones
+    ? style.anemones
+    : [[-2.55, -1.6, 1.25], [5.3, -1.9, 1.0], [-6.6, -1.6, 0.95]];
 
   // anemones first: the clownfish host sits on the anemone rock in clear view
   const topAt = (tx, tz, rad) => {
@@ -3498,27 +3839,27 @@ function placeCorals(rng, rock, field, obstacle, sandHeight) {
     }
     return best;
   };
-  for (const [tx, tz, s] of [[-2.55, -1.6, 1.25], [5.3, -1.9, 1.0], [-6.6, -1.6, 0.95]]) {
+  for (const [tx, tz, s] of anemoneSpots) {
     const i = topAt(tx, tz, 0.6);
     if (i < 0) continue;
     const nrm = [Nn[i * 3], Nn[i * 3 + 1], Nn[i * 3 + 2]];
     add('anemone', rng.int(2), [P[i * 3], P[i * 3 + 1] - 0.03, P[i * 3 + 2]], upish(0.35)(nrm), s, { ao: AO[i] });
   }
-  scatter('staghorn', 18, (x, y, z, n, ao) => n[1] > 0.7 && ao > 0.48 && y > 0.9, [1.0, 1.6], upish(0.3));
-  scatter('fan', 9, (x, y, z, n, ao) => n[1] > 0.55 && z < -2.2 && y > 1.2 && ao > 0.5, [1.0, 1.7],
-    (n) => basis([n[0] * 0.15, 1, n[2] * 0.15], [Math.sin((rng.next() - 0.5) * 1.0), 0, Math.cos((rng.next() - 0.5) * 1.0)]), 0.8);
-  scatter('brain', 12, (x, y, z, n, ao) => n[1] > 0.7 && ao > 0.45, [0.6, 1.1], upish(0.5));
-  scatter('leather', 9, (x, y, z, n, ao) => n[1] > 0.72 && ao > 0.48, [1.0, 1.6], upish(0.3));
-  scatter('plate', 13, (x, y, z, n, ao) => n[1] > -0.15 && n[1] < 0.5 && n[2] > 0.2 && ao > 0.35 && y > 0.6, [0.7, 1.2],
-    (n) => basis([0, 1, 0], [n[0], 0, n[2]]));
-  scatter('finger', 15, (x, y, z, n, ao) => n[1] > 0.62 && ao > 0.42, [0.95, 1.5], upish(0.4));
-  scatter('bubble', 8, (x, y, z, n, ao) => n[1] > 0.3 && ao > 0.3 && ao < 0.8, [0.95, 1.4], upish(0.6));
+  scatter('staghorn', n.staghorn, (x, y, z, nrm, ao) => nrm[1] > 0.7 && ao > 0.48 && y > 0.9, [1.0, 1.6], upish(0.3));
+  scatter('fan', n.fan, (x, y, z, nrm, ao) => nrm[1] > 0.55 && z < -2.2 && y > 1.2 && ao > 0.5, [1.0, 1.7],
+    (nrm) => basis([nrm[0] * 0.15, 1, nrm[2] * 0.15], [Math.sin((rng.next() - 0.5) * 1.0), 0, Math.cos((rng.next() - 0.5) * 1.0)]), 0.8);
+  scatter('brain', n.brain, (x, y, z, nrm, ao) => nrm[1] > 0.7 && ao > 0.45, [0.6, 1.1], upish(0.5));
+  scatter('leather', n.leather, (x, y, z, nrm, ao) => nrm[1] > 0.72 && ao > 0.48, [1.0, 1.6], upish(0.3));
+  scatter('plate', n.plate, (x, y, z, nrm, ao) => nrm[1] > -0.15 && nrm[1] < 0.5 && nrm[2] > 0.2 && ao > 0.35 && y > 0.6, [0.7, 1.2],
+    (nrm) => basis([0, 1, 0], [nrm[0], 0, nrm[2]]));
+  scatter('finger', n.finger, (x, y, z, nrm, ao) => nrm[1] > 0.62 && ao > 0.42, [0.95, 1.5], upish(0.4));
+  scatter('bubble', n.bubble, (x, y, z, nrm, ao) => nrm[1] > 0.3 && ao > 0.3 && ao < 0.8, [0.95, 1.4], upish(0.6));
   // second, smaller generation filling the gaps
-  scatter('staghorn', 10, (x, y, z, n, ao) => n[1] > 0.6 && ao > 0.4, [0.6, 0.9], upish(0.4), 0.7);
-  scatter('finger', 10, (x, y, z, n, ao) => n[1] > 0.5 && ao > 0.4, [0.6, 0.9], upish(0.5), 0.7);
-  scatter('brain', 8, (x, y, z, n, ao) => n[1] > 0.55 && ao > 0.4, [0.35, 0.55], upish(0.6), 0.8);
+  scatter('staghorn', n.staghorn2, (x, y, z, nrm, ao) => nrm[1] > 0.6 && ao > 0.4, [0.6, 0.9], upish(0.4), 0.7);
+  scatter('finger', n.finger2, (x, y, z, nrm, ao) => nrm[1] > 0.5 && ao > 0.4, [0.6, 0.9], upish(0.5), 0.7);
+  scatter('brain', n.brain2, (x, y, z, nrm, ao) => nrm[1] > 0.55 && ao > 0.4, [0.35, 0.55], upish(0.6), 0.8);
   // mushroom clusters on low ledges
-  for (let c = 0; c < 10; c++) {
+  for (let c = 0; c < n.mushrooms; c++) {
     for (let tries = 0; tries < 500; tries++) {
       const i = cand[rng.int(cand.length)];
       const y = P[i * 3 + 1];
@@ -3556,9 +3897,9 @@ function placeCorals(rng, rock, field, obstacle, sandHeight) {
       made++;
     }
   };
-  onSand('brain', 2, [0.5, 0.75], true);
-  onSand('stone', 170, [0.06, 0.24], true);
-  onSand('shell', 70, [0.05, 0.1], false);
+  onSand('brain', n.sandBrain, [0.5, 0.75], true);
+  onSand('stone', n.stones, [0.06, 0.24], true);
+  onSand('shell', n.shells, [0.05, 0.1], false);
 
   return { variants, instances, anemones };
 }
@@ -5411,6 +5752,7 @@ function createWeather(root, cfg, status) {
 
 
 
+
 const SETTINGS_KEY = 'fishtank-settings-v1';
 
 const SPECIES_SETTINGS = SPECIES_KEYS.map((key) => [
@@ -5428,6 +5770,10 @@ const SECTIONS = [
     ['display.minRenderScale', 'Minimum scale', 0.35, 1, 0.05],
   ] }] },
   { title: 'Tank', groups: [{ settings: [
+    ['environment.scene', 'Scene', 'select', [
+      ...SCENES.map((scene) => [scene.id, scene.name]),
+      ['custom', 'Custom'],
+    ]],
     ['environment.waterColor', 'Water color', 'color'],
     ['environment.waterClarity', 'Clarity', 0.3, 2, 0.01],
     ['environment.ambientLightIntensity', 'Ambient light', 0, 2, 0.01],
@@ -5542,6 +5888,15 @@ function eachSetting(groups, visit) {
 }
 for (const section of SECTIONS) eachSetting(section.groups, (setting) => SPEC.set(setting[0], setting));
 
+// Sun colour and direction travel with a scene. They persist, and they are not sliders.
+const LIGHT_SPEC = new Map([
+  ['environment.sunColor', ['environment.sunColor', 'Sun color', 'color']],
+  ['environment.sunIntensity', ['environment.sunIntensity', 'Sun intensity', 0, 4, 0.01]],
+  ['environment.lightX', ['environment.lightX', 'Light x', -2, 2, 0.01]],
+  ['environment.lightY', ['environment.lightY', 'Light y', 0.05, 2, 0.01]],
+  ['environment.lightZ', ['environment.lightZ', 'Light z', -2, 2, 0.01]],
+]);
+
 const clone = (v) => JSON.parse(JSON.stringify(v));
 const partsOf = (path) => path.split('.');
 function getPath(obj, path) {
@@ -5613,20 +5968,23 @@ function encodeBase64Url(text) {
 function prepareConfig(search = location.search) {
   const cfg = clone(DEFAULT_CONFIG);
   const visitOnly = new Set();
+  const explicit = new Set();
   const url = new URLSearchParams(search);
-  applyDocument(cfg, readStorage());
+  applyDocument(cfg, readStorage(), null, explicit);
   if (url.has('s')) {
     const shared = decodeBase64Url(url.get('s'));
     if (shared && typeof shared === 'object' && !Array.isArray(shared)) {
+      explicit.clear();
       for (const path of SPEC.keys()) setPath(cfg, path, getPath(DEFAULT_CONFIG, path));
-      applyDocument(cfg, shared);
+      for (const path of LIGHT_SPEC.keys()) setPath(cfg, path, getPath(DEFAULT_CONFIG, path));
+      applyDocument(cfg, shared, null, explicit);
     }
   }
   let packed = null;
   if (url.has('config')) {
     try { packed = JSON.parse(atob(url.get('config').replace(/-/g, '+').replace(/_/g, '/'))); }
     catch { /* ignored; loadConfig reports it when used directly */ }
-    applyDocument(cfg, packed, visitOnly);
+    applyDocument(cfg, packed, visitOnly, explicit);
   }
   // dotted keys that are not panel settings (models, and anything added later)
   const urlCfg = loadConfig(search);
@@ -5634,11 +5992,13 @@ function prepareConfig(search = location.search) {
   let populationFromUrl = false;
   for (const [key, value] of url) {
     if (!key.includes('.')) continue;
-    if (SPEC.has(key)) {
-      const coerced = coerce(SPEC.get(key), value);
+    const spec = SPEC.get(key) || LIGHT_SPEC.get(key);
+    if (spec) {
+      const coerced = coerce(spec, value);
       if (coerced === undefined) continue;
       setPath(cfg, key, coerced);
       visitOnly.add(key);
+      explicit.add(key);
       if (key === 'fish.population') populationFromUrl = true;
       if (key.startsWith('fish.speciesDistribution.')) speciesFromUrl = true;
     } else {
@@ -5659,6 +6019,15 @@ function prepareConfig(search = location.search) {
   }
   // ?fish.population=50 scales the mix. A URL that names species instead is the mix itself.
   if (speciesFromUrl && !populationFromUrl) cfg.fish.population = Object.values(cfg.fish.speciesDistribution).reduce((a, b) => a + b, 0);
+  if (url.has('scene') && !visitOnly.has('environment.scene')) {
+    const id = String(url.get('scene') || '').trim().toLowerCase();
+    if (id === 'custom' || sceneById(id)) {
+      cfg.environment.scene = id;
+      explicit.add('environment.scene');
+      visitOnly.add('environment.scene');
+    }
+  }
+  reconcileScene(cfg, explicit, visitOnly);
   settleFish(cfg);
   return { cfg, visitOnly };
 }
@@ -5675,21 +6044,49 @@ function settleFish(cfg) {
   cfg.fish.population = Object.values(counts).reduce((a, b) => a + b, 0);
 }
 
-function applyDocument(cfg, data, locked) {
-  if (!data) return;
-  for (const path of SPEC.keys()) {
+function applyKnown(cfg, data, spec, locked, explicit) {
+  for (const path of spec.keys()) {
     let raw;
     if (Object.hasOwn(data, path)) raw = data[path];
     else if (hasPath(data, path)) raw = getPath(data, path);
     else continue;
-    const value = coerce(SPEC.get(path), raw);
+    const value = coerce(spec.get(path), raw);
     if (value === undefined) continue;
     setPath(cfg, path, value);
     if (locked) locked.add(path);
+    if (explicit) explicit.add(path);
   }
+}
+function applyDocument(cfg, data, locked, explicit) {
+  if (!data) return;
+  applyKnown(cfg, data, SPEC, locked, explicit);
+  applyKnown(cfg, data, LIGHT_SPEC, locked, explicit);
   // seed and model paths are not panel settings, but a settings file may carry them
   if (Number.isFinite(Number(data.seed))) cfg.seed = Number(data.seed);
   if (data.assets && typeof data.assets === 'object') deepMerge(cfg.assets, data.assets);
+}
+
+// A named scene fills any look it owns that this visit did not set itself. A saved tank
+// that predates scenes, or a hand-edited color, stays put and shows as Custom.
+function reconcileScene(cfg, explicit, visitOnly) {
+  if (!explicit.has('environment.scene')) {
+    const edited = SCENE_FIELDS.some(([, path]) => explicit.has(path)
+      && !sceneValueEqual(getPath(cfg, path), getPath(DEFAULT_CONFIG, path)));
+    if (edited) {
+      cfg.environment.scene = 'custom';
+      return;
+    }
+  }
+  const scene = sceneById(cfg.environment.scene);
+  if (!scene) return;
+  const preview = visitOnly.has('environment.scene');
+  for (const [key, path] of SCENE_FIELDS) {
+    if (preview) {
+      if (visitOnly.has(path)) continue;
+      setPath(cfg, path, scene[key]);
+      visitOnly.add(path);
+    } else if (!explicit.has(path)) setPath(cfg, path, scene[key]);
+  }
 }
 
 function createSettings(cfg, visitOnly, onChange) {
@@ -5700,6 +6097,7 @@ function createSettings(cfg, visitOnly, onChange) {
   // proportions behind the population slider; species edits replace one entry
   let mix = clone(cfg.fish.speciesDistribution);
   let shareUrlInput = null;
+  let sceneNote = 0;
 
   function setPanelOpen(open) {
     panel.classList.toggle('hidden', !open);
@@ -5716,6 +6114,11 @@ function createSettings(cfg, visitOnly, onChange) {
   function snapshot() {
     const changed = {};
     for (const path of SPEC.keys()) {
+      if (visitOnly.has(path)) continue;
+      const value = getPath(cfg, path);
+      if (value !== getPath(DEFAULT_CONFIG, path)) setPath(changed, path, value);
+    }
+    for (const path of LIGHT_SPEC.keys()) {
       if (visitOnly.has(path)) continue;
       const value = getPath(cfg, path);
       if (value !== getPath(DEFAULT_CONFIG, path)) setPath(changed, path, value);
@@ -5777,6 +6180,40 @@ function createSettings(cfg, visitOnly, onChange) {
     button.classList.toggle('on', on);
     button.textContent = on ? 'Sound on' : 'Sound off';
   }
+  function paintScene() {
+    const button = document.getElementById('scene');
+    const scene = sceneById(cfg.environment.scene);
+    const name = scene ? scene.name : 'Custom';
+    button.textContent = name;
+    button.title = `${name}. Next scene (]), previous ([)`;
+    button.setAttribute('aria-label', `Scene, ${name}. Activate for the next scene`);
+  }
+  function showSceneLabel() {
+    const el = document.getElementById('scene-label');
+    const scene = sceneById(cfg.environment.scene);
+    el.textContent = scene ? scene.name : 'Custom';
+    el.setAttribute('aria-hidden', 'false');
+    el.classList.add('show');
+    clearTimeout(sceneNote);
+    sceneNote = setTimeout(() => {
+      el.classList.remove('show');
+      el.setAttribute('aria-hidden', 'true');
+    }, 2400);
+  }
+  function syncSceneChoice() {
+    const matched = SCENES.find((scene) => SCENE_FIELDS.every(([key, field]) => sceneValueEqual(getPath(cfg, field), scene[key])));
+    const id = matched ? matched.id : 'custom';
+    if (id === cfg.environment.scene) return;
+    cfg.environment.scene = id;
+    visitOnly.delete('environment.scene');
+    paint('environment.scene');
+  }
+  function cycleScene(step) {
+    const ids = SCENES.map((scene) => scene.id);
+    let index = ids.indexOf(cfg.environment.scene);
+    if (index < 0) index = step > 0 ? -1 : 0;
+    commit('environment.scene', ids[(index + step + ids.length) % ids.length]);
+  }
   function applyChrome() {
     document.getElementById('hud').style.display = cfg.display.showInfo ? 'block' : 'none';
     document.getElementById('toolbar').style.display = cfg.display.showButtons ? '' : 'none';
@@ -5789,7 +6226,19 @@ function createSettings(cfg, visitOnly, onChange) {
     const value = coerce(spec, raw);
     if (value === undefined) return false;
     visitOnly.delete(path);
-    if (path === 'fish.population') {
+    let announceScene = false;
+    if (path === 'environment.scene') {
+      setPath(cfg, path, value);
+      if (value !== 'custom') {
+        copyScene(cfg, value);
+        for (const [, field] of SCENE_FIELDS) {
+          visitOnly.delete(field);
+          paint(field);
+        }
+      }
+      paint(path);
+      announceScene = true;
+    } else if (path === 'fish.population') {
       cfg.fish.population = value;
       cfg.fish.speciesDistribution = clone(mix);
       settleFish(cfg);
@@ -5807,11 +6256,18 @@ function createSettings(cfg, visitOnly, onChange) {
       paint(path);
       if (controlKind(path) === 'text') refreshPlaceLabel(path);
     }
+    if (path !== 'environment.scene' && SCENE_FIELDS.some(([, field]) => field === path)) {
+      syncSceneChoice();
+      visitOnly.delete('environment.scene');
+      for (const [, field] of SCENE_FIELDS) visitOnly.delete(field);
+    }
     refreshLocks();
     paintSound();
+    paintScene();
     applyChrome();
     remember();
     onChange(path);
+    if (announceScene && panel.classList.contains('hidden')) showSceneLabel();
     return true;
   }
 
@@ -5961,6 +6417,8 @@ function createSettings(cfg, visitOnly, onChange) {
       ['F1', 'Show settings'],
       ['Esc', 'Close settings'],
       ['H', 'Show or hide settings'],
+      [']', 'Next scene'],
+      ['[', 'Previous scene'],
       ['M', 'Turn sound on or off'],
       ['T', 'Show or hide the clock'],
       ['F', 'Show or hide the weather'],
@@ -6020,6 +6478,7 @@ function createSettings(cfg, visitOnly, onChange) {
   function exportSettings() {
     const exported = {};
     for (const path of SPEC.keys()) setPath(exported, path, getPath(cfg, path));
+    for (const path of LIGHT_SPEC.keys()) setPath(exported, path, getPath(cfg, path));
     const blob = new Blob([JSON.stringify(exported, null, 2) + '\n'], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -6032,22 +6491,30 @@ function createSettings(cfg, visitOnly, onChange) {
     if (!data || typeof data !== 'object' || Array.isArray(data)) { note('Settings file must be a JSON object'); return; }
     let count = 0;
     const fish = [];
-    for (const path of SPEC.keys()) {
-      const raw = Object.hasOwn(data, path) ? data[path] : hasPath(data, path) ? getPath(data, path) : undefined;
-      if (raw === undefined) continue;
-      const value = coerce(SPEC.get(path), raw);
-      if (value === undefined) continue;
-      visitOnly.delete(path);
-      setPath(cfg, path, value);
-      count++;
-      if (path.startsWith('fish.')) fish.push(path);
+    const present = new Set();
+    function take(specMap) {
+      for (const path of specMap.keys()) {
+        const raw = Object.hasOwn(data, path) ? data[path] : hasPath(data, path) ? getPath(data, path) : undefined;
+        if (raw === undefined) continue;
+        const value = coerce(specMap.get(path), raw);
+        if (value === undefined) continue;
+        visitOnly.delete(path);
+        setPath(cfg, path, value);
+        present.add(path);
+        count++;
+        if (path.startsWith('fish.')) fish.push(path);
+      }
     }
+    take(SPEC);
+    take(LIGHT_SPEC);
+    if (present.has('environment.scene')) copyScene(cfg, cfg.environment.scene, present);
     mix = clone(cfg.fish.speciesDistribution);
     settleFish(cfg);
     for (const path of SPEC.keys()) paint(path);
     refreshPlaceLabels();
     refreshLocks();
     paintSound();
+    paintScene();
     applyChrome();
     remember();
     for (const path of SPEC.keys()) if (!path.startsWith('fish.')) onChange(path);
@@ -6059,11 +6526,16 @@ function createSettings(cfg, visitOnly, onChange) {
       visitOnly.delete(path);
       setPath(cfg, path, getPath(DEFAULT_CONFIG, path));
     }
+    for (const path of LIGHT_SPEC.keys()) {
+      visitOnly.delete(path);
+      setPath(cfg, path, getPath(DEFAULT_CONFIG, path));
+    }
     mix = clone(cfg.fish.speciesDistribution);
     for (const path of SPEC.keys()) paint(path);
     refreshPlaceLabels();
     refreshLocks();
     paintSound();
+    paintScene();
     applyChrome();
     remember();
     for (const path of SPEC.keys()) onChange(path);
@@ -6093,6 +6565,10 @@ function createSettings(cfg, visitOnly, onChange) {
   document.getElementById('sound').addEventListener('click', (event) => {
     event.stopPropagation();
     commit('audio.enabled', !cfg.audio.enabled);
+  });
+  document.getElementById('scene').addEventListener('click', (event) => {
+    event.stopPropagation();
+    cycleScene(event.shiftKey ? -1 : 1);
   });
 
   const placeDialog = document.createElement('div');
@@ -6256,6 +6732,10 @@ function createSettings(cfg, visitOnly, onChange) {
     if (event.code === 'F1') { event.preventDefault(); setPanelOpen(true); }
     if (field || event.ctrlKey || event.metaKey || event.altKey || !placeDialog.hidden) return;
     if (event.code === 'KeyH') togglePanel();
+    if (event.code === 'BracketRight' || event.code === 'BracketLeft') {
+      event.preventDefault();
+      cycleScene(event.code === 'BracketRight' ? 1 : -1);
+    }
     if (event.code === 'KeyM') commit('audio.enabled', !cfg.audio.enabled);
     if (event.code === 'KeyT') commit('clock.enabled', !cfg.clock.enabled);
     if (event.code === 'KeyF') commit('weather.enabled', !cfg.weather.enabled);
@@ -6263,6 +6743,7 @@ function createSettings(cfg, visitOnly, onChange) {
 
   refreshLocks();
   paintSound();
+  paintScene();
   applyChrome();
   refreshPlaceLabels();
   return { note, openPlace: openPlaceDialog };
@@ -6279,6 +6760,8 @@ function createSettings(cfg, visitOnly, onChange) {
 //   ?cam=x,y,z,tx,ty,tz     override the camera
 //   ?t=seconds              start the clock at a given time
 //   ?config=<base64 JSON>   or dotted keys such as fish.population=50 (see js/config.js)
+//   ?scene=sunset           one visit of a named scene (reef, lagoon, morning, sunset, moonlight, deep)
+
 
 
 
@@ -6360,69 +6843,114 @@ async function main() {
   };
 
   // ------------------------------------------------------------------------------------
-  // Scene content (CPU)
+  // Scene content (CPU). Each named scene has its own rock and coral; Day reef is the
+  // original layout. Built reefs are kept so switching back does not generate them again.
   // ------------------------------------------------------------------------------------
-  const tReef = performance.now();
-  const reef = buildReef(cfg.seed);
-  log(`reef built in ${(performance.now() - tReef).toFixed(0)} ms`);
-
-  // rock: pos, normal, ao
-  const rock = reef.rock;
-  const rockV = new Float32Array(rock.count * 7);
-  for (let i = 0; i < rock.count; i++) {
-    rockV.set(rock.positions.subarray(i * 3, i * 3 + 3), i * 7);
-    rockV.set(rock.normals.subarray(i * 3, i * 3 + 3), i * 7 + 3);
-    rockV[i * 7 + 6] = rock.ao[i];
+  let reef = null;
+  let reefKey = '';
+  let reefSwap = false;
+  let reefFrame = 0;
+  const reefCache = new Map();
+  const geo = {
+    rockVB: null, rockIB: null, rockCount: 0,
+    sandVB: null, sandIB: null, sandCount: 0,
+    coralVB: null, coralIB: null, coralInstB: null,
+    draws: [],
+  };
+  function retire(buffers) {
+    const drop = () => { for (const b of buffers) if (b) b.destroy(); };
+    const pending = device.queue.onSubmittedWorkDone && device.queue.onSubmittedWorkDone();
+    if (pending && typeof pending.then === 'function') pending.then(drop, drop);
+    else drop();
   }
-  const rockVB = buffer(rockV, BU.VERTEX, 'rock');
-  const rockIB = buffer(rock.indices, BU.INDEX, 'rock idx');
-  const sandVB = buffer(reef.sand.vertices, BU.VERTEX, 'sand');
-  const sandIB = buffer(reef.sand.indices, BU.INDEX, 'sand idx');
-
-  // corals: every variant in one vertex/index buffer, instances grouped per variant
-  const coral = reef.corals;
-  const groups = new Map();
-  for (const inst of coral.instances) {
-    const k = inst.name + '#' + inst.variant;
-    if (!groups.has(k)) groups.set(k, []);
-    groups.get(k).push(inst);
-  }
-  let nV = 0, nI = 0;
-  for (const k of groups.keys()) {
-    const [name, v] = k.split('#');
-    const m = coral.variants[name][Number(v)];
-    nV += m.vertices.length / CORAL_STRIDE;
-    nI += m.indices.length;
-  }
-  const coralV = new Float32Array(nV * CORAL_STRIDE), coralI = new Uint32Array(nI);
-  const coralInst = new Float32Array(coral.instances.length * 24);
-  const coralDraws = [];
-  {
-    let vo = 0, io = 0, ii = 0;
-    for (const [k, list] of groups) {
+  function uploadReef(next) {
+    const rock = next.rock;
+    const rockV = new Float32Array(rock.count * 7);
+    for (let i = 0; i < rock.count; i++) {
+      rockV.set(rock.positions.subarray(i * 3, i * 3 + 3), i * 7);
+      rockV.set(rock.normals.subarray(i * 3, i * 3 + 3), i * 7 + 3);
+      rockV[i * 7 + 6] = rock.ao[i];
+    }
+    const coral = next.corals;
+    const groups = new Map();
+    for (const inst of coral.instances) {
+      const k = inst.name + '#' + inst.variant;
+      if (!groups.has(k)) groups.set(k, []);
+      groups.get(k).push(inst);
+    }
+    let nV = 0, nI = 0;
+    for (const k of groups.keys()) {
       const [name, v] = k.split('#');
       const m = coral.variants[name][Number(v)];
-      coralV.set(m.vertices, vo * CORAL_STRIDE);
-      coralI.set(m.indices, io);
-      for (const c of list) {
-        const o = ii * 24, s = c.scale, b = c.b;
-        coralInst.set([b.r[0] * s, b.r[1] * s, b.r[2] * s, c.type,
-          b.u[0] * s, b.u[1] * s, b.u[2] * s, c.sway,
-          b.f[0] * s, b.f[1] * s, b.f[2] * s, c.phase,
-          c.pos[0], c.pos[1], c.pos[2], c.ao,
-          c.colorA[0], c.colorA[1], c.colorA[2], 0,
-          c.colorB[0], c.colorB[1], c.colorB[2], 0], o);
-        ii++;
+      nV += m.vertices.length / CORAL_STRIDE;
+      nI += m.indices.length;
+    }
+    const coralV = new Float32Array(nV * CORAL_STRIDE), coralI = new Uint32Array(nI);
+    const coralInst = new Float32Array(Math.max(1, coral.instances.length) * 24);
+    const draws = [];
+    {
+      let vo = 0, io = 0, ii = 0;
+      for (const [k, list] of groups) {
+        const [name, v] = k.split('#');
+        const m = coral.variants[name][Number(v)];
+        coralV.set(m.vertices, vo * CORAL_STRIDE);
+        coralI.set(m.indices, io);
+        for (const c of list) {
+          const o = ii * 24, s = c.scale, b = c.b;
+          coralInst.set([b.r[0] * s, b.r[1] * s, b.r[2] * s, c.type,
+            b.u[0] * s, b.u[1] * s, b.u[2] * s, c.sway,
+            b.f[0] * s, b.f[1] * s, b.f[2] * s, c.phase,
+            c.pos[0], c.pos[1], c.pos[2], c.ao,
+            c.colorA[0], c.colorA[1], c.colorA[2], 0,
+            c.colorB[0], c.colorB[1], c.colorB[2], 0], o);
+          ii++;
+        }
+        draws.push({ firstIndex: io, indexCount: m.indices.length, baseVertex: vo, firstInstance: ii - list.length, instanceCount: list.length, soft: SOFT_TYPES.has(list[0].type) });
+        vo += m.vertices.length / CORAL_STRIDE;
+        io += m.indices.length;
       }
-      coralDraws.push({ firstIndex: io, indexCount: m.indices.length, baseVertex: vo, firstInstance: ii - list.length, instanceCount: list.length, soft: SOFT_TYPES.has(list[0].type) });
-      vo += m.vertices.length / CORAL_STRIDE;
-      io += m.indices.length;
+    }
+    const made = {
+      rockVB: buffer(rockV, BU.VERTEX, 'rock'),
+      rockIB: buffer(rock.indices, BU.INDEX, 'rock idx'),
+      rockCount: rock.indices.length,
+      sandVB: buffer(next.sand.vertices, BU.VERTEX, 'sand'),
+      sandIB: buffer(next.sand.indices, BU.INDEX, 'sand idx'),
+      sandCount: next.sand.indices.length,
+      coralVB: buffer(coralV, BU.VERTEX, 'coral'),
+      coralIB: buffer(coralI, BU.INDEX, 'coral idx'),
+      coralInstB: buffer(coralInst, BU.VERTEX, 'coral inst'),
+      draws,
+    };
+    const retired = [geo.rockVB, geo.rockIB, geo.sandVB, geo.sandIB, geo.coralVB, geo.coralIB, geo.coralInstB];
+    Object.assign(geo, made);
+    reef = next;
+    retire(retired);
+    log(`corals: ${coral.instances.length} instances, ${draws.length} meshes, ${nV} verts`);
+  }
+  function loadReef(sceneId, swap) {
+    const spec = reefSpec(sceneById(sceneId) ? sceneId : 'reef', cfg.seed);
+    if (spec.key === reefKey) return;
+    let built = reefCache.get(spec.key);
+    if (!built) {
+      const tReef = performance.now();
+      built = buildReef(spec.seed, spec.formation);
+      reefCache.set(spec.key, built);
+      log(`reef built in ${(performance.now() - tReef).toFixed(0)} ms`);
+    }
+    uploadReef(built);
+    reefKey = spec.key;
+    if (swap) {
+      renderStaticShadow();
+      restock();
     }
   }
-  const coralVB = buffer(coralV, BU.VERTEX, 'coral');
-  const coralIB = buffer(coralI, BU.INDEX, 'coral idx');
-  const coralInstB = buffer(coralInst, BU.VERTEX, 'coral inst');
-  log(`corals: ${coral.instances.length} instances, ${coralDraws.length} meshes, ${nV} verts`);
+  function queueReef(sceneId) {
+    if (!reefSwap || sceneId === 'custom' || !sceneById(sceneId)) return;
+    cancelAnimationFrame(reefFrame);
+    reefFrame = requestAnimationFrame(() => loadReef(sceneId, true));
+  }
+  loadReef(cfg.environment.scene, false);
 
   // fish: one mesh + instance buffer + species uniform per species
   const distribution = VIEW === 'lineup' ? Object.fromEntries(SPECIES_KEYS.map((k) => [k, 0])) : resolvePopulation(cfg);
@@ -6491,25 +7019,53 @@ async function main() {
   }
   let fov = (cfg.camera.fovDegrees || 32) * Math.PI / 180;
   const eye = camBase.eye.slice(), target = camBase.target.slice();
+  let panPhase = 0;
   const view = new Float32Array(16), proj = new Float32Array(16), viewProj = new Float32Array(16), invViewProj = new Float32Array(16);
-  const L = [0.22, 1, 0.3];
-  { const l = Math.hypot(...L); L[0] /= l; L[1] /= l; L[2] /= l; }
+  const L = [0, 1, 0];
+  const sunRgb = [1, 0.97, 0.9];
   const lightViewProj = new Float32Array(16);
-  {
-    const c = [0, 1.8, -3.6];
+  let shadowStamp = '';
+  // High sun keeps the original shadow frustum. A lower sun (morning, sunset) needs a
+  // wider one so the tank still falls inside the map.
+  function updateLight() {
+    const e = cfg.environment;
+    L[0] = Number(e.lightX) || 0;
+    L[1] = Number(e.lightY) || 0;
+    L[2] = Number(e.lightZ) || 0;
+    const len = Math.hypot(L[0], L[1], L[2]) || 1;
+    L[0] /= len; L[1] /= len; L[2] /= len;
+    const rgb = linearColor(e.sunColor || '#fffbf3');
+    sunRgb[0] = rgb[0]; sunRgb[1] = rgb[1]; sunRgb[2] = rgb[2];
     const lv = new Float32Array(16), lp = new Float32Array(16);
-    lookAt(lv, [c[0] + L[0] * 20, c[1] + L[1] * 20, c[2] + L[2] * 20], c, [0, 0, -1]);
-    ortho(lp, -14.5, 14.5, -9, 9, 2, 40);
+    const c = [0, 1.8, -3.6];
+    const up = L[1] > 0.75 ? [0, 0, -1] : [0, 1, 0];
+    lookAt(lv, [c[0] + L[0] * 20, c[1] + L[1] * 20, c[2] + L[2] * 20], c, up);
+    if (L[1] > 0.75) ortho(lp, -14.5, 14.5, -9, 9, 2, 40);
+    else ortho(lp, -18, 18, -12, 12, 1.2, 48);
     mat4Mul(lightViewProj, lp, lv);
   }
-  function updateCamera(time, aspect) {
-    if (cfg.camera.movementEnabled && VIEW !== 'lineup') {
-      // a few centimetres of lateral drift over minutes: felt more than seen
-      const s = cfg.camera.movementSpeed;
-      const a = Math.sin(time * 0.011 * s) * 0.7 + Math.sin(time * 0.0047 * s + 1.3) * 0.3;
-      eye[0] = camBase.eye[0] + a * 0.6;
-      eye[1] = camBase.eye[1] + Math.sin(time * 0.0073 * s + 0.4) * 0.08;
-      target[0] = camBase.target[0] + a * 0.35;
+  function updateCamera(dt, aspect) {
+    const enabled = cfg.camera.movementEnabled && VIEW !== 'lineup';
+    const speed = enabled ? Math.max(0, Number(cfg.camera.movementSpeed) || 0) : 0;
+    panPhase += dt * speed;
+    // One slow sweep across the reef, plus a smaller rise and fall so the path does not repeat.
+    // At speed 1 a side-to-side pass takes about half a minute.
+    const sway = enabled ? Math.sin(panPhase * 0.1) : 0;
+    const bob = enabled ? Math.sin(panPhase * 0.043 + 0.8) : 0;
+    const goalEye = [
+      camBase.eye[0] + sway * 1.1,
+      camBase.eye[1] + bob * 0.32,
+      camBase.eye[2] - Math.abs(sway) * 0.55,
+    ];
+    const goalTarget = [
+      camBase.target[0] + sway * 4.8,
+      camBase.target[1] + bob * 0.2,
+      camBase.target[2],
+    ];
+    const k = dt > 0 ? 1 - Math.exp(-dt * 2.4) : 1;
+    for (let i = 0; i < 3; i++) {
+      eye[i] += (goalEye[i] - eye[i]) * k;
+      target[i] += (goalTarget[i] - target[i]) * k;
     }
     lookAt(view, eye, target, [0, 1, 0]);
     perspective(proj, fov, aspect, 0.5, 80);
@@ -6657,7 +7213,7 @@ async function main() {
     const f = frameF;
     f.set(viewProj, 0); f.set(invViewProj, 16); f.set(lightViewProj, 32);
     f[48] = eye[0]; f[49] = eye[1]; f[50] = eye[2]; f[51] = shaderTime;
-    f[52] = L[0]; f[53] = L[1]; f[54] = L[2]; f[55] = 2.4;
+    f[52] = L[0]; f[53] = L[1]; f[54] = L[2]; f[55] = env.sunIntensity;
     f[56] = deep[0]; f[57] = deep[1]; f[58] = deep[2]; f[59] = env.waterClarity;
     f[60] = shallow[0]; f[61] = shallow[1]; f[62] = shallow[2]; f[63] = env.ambientLightIntensity;
     f[64] = current.x; f[65] = current.y; f[66] = current.z; f[67] = cfg.effects.coralAnimationEnabled ? 1 : 0;
@@ -6668,24 +7224,28 @@ async function main() {
       const s = bubbleSources()[i];
       f[80 + i * 4] = s ? s[0] : 0; f[81 + i * 4] = s ? s[1] : 0; f[82 + i * 4] = s ? s[2] : 0; f[83 + i * 4] = s ? 1 : 0;
     }
+    f[104] = sunRgb[0]; f[105] = sunRgb[1]; f[106] = sunRgb[2]; f[107] = 0;
     device.queue.writeBuffer(frameUB, 0, f);
   }
 
-  // static casters (rock and hard corals) are rendered once
-  writeFrame(0, 1, 1);
-  {
+  // static casters (rock and hard corals) are rendered once, and again when the sun moves
+  function renderStaticShadow() {
+    writeFrame(0, 1, 1);
     const enc = device.createCommandEncoder();
     const pass = enc.beginRenderPass({ colorAttachments: [], depthStencilAttachment: { view: staticShadow.createView(), depthClearValue: 1, depthLoadOp: 'clear', depthStoreOp: 'store' } });
     pass.setBindGroup(0, shadowBG);
     pass.setPipeline(rockShadowPipe);
-    pass.setVertexBuffer(0, rockVB); pass.setIndexBuffer(rockIB, 'uint32');
-    pass.drawIndexed(rock.indices.length);
+    pass.setVertexBuffer(0, geo.rockVB); pass.setIndexBuffer(geo.rockIB, 'uint32');
+    pass.drawIndexed(geo.rockCount);
     pass.setPipeline(coralShadowPipe);
-    pass.setVertexBuffer(0, coralVB); pass.setVertexBuffer(1, coralInstB); pass.setIndexBuffer(coralIB, 'uint32');
-    for (const d of coralDraws) if (!d.soft) pass.drawIndexed(d.indexCount, d.instanceCount, d.firstIndex, d.baseVertex, d.firstInstance);
+    pass.setVertexBuffer(0, geo.coralVB); pass.setVertexBuffer(1, geo.coralInstB); pass.setIndexBuffer(geo.coralIB, 'uint32');
+    for (const d of geo.draws) if (!d.soft) pass.drawIndexed(d.indexCount, d.instanceCount, d.firstIndex, d.baseVertex, d.firstInstance);
     pass.end();
     device.queue.submit([enc.finish()]);
   }
+  updateLight();
+  shadowStamp = L.map((n) => n.toFixed(4)).join(',');
+  renderStaticShadow();
 
   // ------------------------------------------------------------------------------------
   // Render targets (recreated on resize)
@@ -6826,7 +7386,7 @@ async function main() {
     drift[1] = (drift[1] + current.y * dt * 0.22 + 7.7) % 7.7;
     drift[2] = (drift[2] + current.z * dt * 0.22 + 7.95) % 7.95;
 
-    updateCamera(time, W / H);
+    updateCamera(dt, W / H);
     const cpu0 = performance.now();
     if (VIEW === 'lineup') writeLineup(time);
     else {
@@ -6850,8 +7410,8 @@ async function main() {
       const pass = enc.beginRenderPass(passes.shadow);
       pass.setBindGroup(0, shadowBG);
       pass.setPipeline(coralShadowPipe);
-      pass.setVertexBuffer(0, coralVB); pass.setVertexBuffer(1, coralInstB); pass.setIndexBuffer(coralIB, 'uint32');
-      for (const d of coralDraws) if (d.soft) pass.drawIndexed(d.indexCount, d.instanceCount, d.firstIndex, d.baseVertex, d.firstInstance);
+      pass.setVertexBuffer(0, geo.coralVB); pass.setVertexBuffer(1, geo.coralInstB); pass.setIndexBuffer(geo.coralIB, 'uint32');
+      for (const d of geo.draws) if (d.soft) pass.drawIndexed(d.indexCount, d.instanceCount, d.firstIndex, d.baseVertex, d.firstInstance);
       pass.setPipeline(fishShadowPipe);
       for (const key in fishSlots) {
         const s = fishSlots[key];
@@ -6869,14 +7429,14 @@ async function main() {
       });
       pass.setBindGroup(0, frameBG);
       pass.setPipeline(rockPipe);
-      pass.setVertexBuffer(0, rockVB); pass.setIndexBuffer(rockIB, 'uint32');
-      pass.drawIndexed(rock.indices.length);
+      pass.setVertexBuffer(0, geo.rockVB); pass.setIndexBuffer(geo.rockIB, 'uint32');
+      pass.drawIndexed(geo.rockCount);
       pass.setPipeline(sandPipe);
-      pass.setVertexBuffer(0, sandVB); pass.setIndexBuffer(sandIB, 'uint32');
-      pass.drawIndexed(reef.sand.indices.length);
+      pass.setVertexBuffer(0, geo.sandVB); pass.setIndexBuffer(geo.sandIB, 'uint32');
+      pass.drawIndexed(geo.sandCount);
       pass.setPipeline(coralPipe);
-      pass.setVertexBuffer(0, coralVB); pass.setVertexBuffer(1, coralInstB); pass.setIndexBuffer(coralIB, 'uint32');
-      for (const d of coralDraws) pass.drawIndexed(d.indexCount, d.instanceCount, d.firstIndex, d.baseVertex, d.firstInstance);
+      pass.setVertexBuffer(0, geo.coralVB); pass.setVertexBuffer(1, geo.coralInstB); pass.setIndexBuffer(geo.coralIB, 'uint32');
+      for (const d of geo.draws) pass.drawIndexed(d.indexCount, d.instanceCount, d.firstIndex, d.baseVertex, d.firstInstance);
       pass.setPipeline(fishPipe);
       for (const key in fishSlots) {
         const s = fishSlots[key];
@@ -6986,8 +7546,15 @@ async function main() {
     audio.apply(cfg.audio);
   }
   let widgets = null;
+  reefSwap = true;
   const settings = createSettings(cfg, visitOnly, (path) => {
-    if (path === 'environment.waterColor') refreshWater();
+    if (path === 'environment.waterColor' || path === 'environment.scene') refreshWater();
+    if (path === 'environment.scene') queueReef(cfg.environment.scene);
+    if (path === 'environment.scene' || path === 'environment.waterColor' || path === 'environment.sunColor' || path.startsWith('environment.light')) {
+      updateLight();
+      const stamp = L.map((n) => n.toFixed(4)).join(',');
+      if (stamp !== shadowStamp) { shadowStamp = stamp; renderStaticShadow(); }
+    }
     if (path === 'camera.fovDegrees') fov = cfg.camera.fovDegrees * Math.PI / 180;
     if (path === 'display.targetFps') { fpsTarget = cfg.display.targetFps; nextDue = 0; }
     if (path === 'display.maxRenderScale' || path === 'display.minRenderScale') {

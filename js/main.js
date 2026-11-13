@@ -8,6 +8,7 @@
 //   ?cam=x,y,z,tx,ty,tz     override the camera
 //   ?t=seconds              start the clock at a given time
 //   ?config=<base64 JSON>   or dotted keys such as fish.population=50 (see js/config.js)
+//   ?scene=sunset           one visit of a named scene (reef, lagoon, morning, sunset, moonlight, deep)
 import { TAU, clamp, lerp, perspective, ortho, lookAt, mat4Mul, mat4Invert, hexToRgb, srgbToLinear } from './math.js';
 import { resolvePopulation } from './config.js';
 import { prepareConfig, createSettings } from './settings.js';
@@ -16,8 +17,9 @@ import { createWeather } from './weather.js';
 import { SPECIES, SPECIES_KEYS } from './species.js';
 import { buildFishMesh, FISH_STRIDE } from './fish-mesh.js';
 import { CORAL_STRIDE, SOFT_TYPES } from './coral-mesh.js';
-import { buildReef, TANK, FISH_BOUNDS } from './reef.js';
+import { buildReef, reefSpec, TANK, FISH_BOUNDS } from './reef.js';
 import { Aquarium } from './behavior.js';
+import { sceneById } from './scenes.js';
 import { loadGltf, fishMeshFromModel } from './gltf.js';
 import { createAquariumAudio } from './audio.js';
 import { FRAME_FLOATS, SHADOW_SIZE } from './wgsl/common.js';
@@ -90,69 +92,114 @@ async function main() {
   };
 
   // ------------------------------------------------------------------------------------
-  // Scene content (CPU)
+  // Scene content (CPU). Each named scene has its own rock and coral; Day reef is the
+  // original layout. Built reefs are kept so switching back does not generate them again.
   // ------------------------------------------------------------------------------------
-  const tReef = performance.now();
-  const reef = buildReef(cfg.seed);
-  log(`reef built in ${(performance.now() - tReef).toFixed(0)} ms`);
-
-  // rock: pos, normal, ao
-  const rock = reef.rock;
-  const rockV = new Float32Array(rock.count * 7);
-  for (let i = 0; i < rock.count; i++) {
-    rockV.set(rock.positions.subarray(i * 3, i * 3 + 3), i * 7);
-    rockV.set(rock.normals.subarray(i * 3, i * 3 + 3), i * 7 + 3);
-    rockV[i * 7 + 6] = rock.ao[i];
+  let reef = null;
+  let reefKey = '';
+  let reefSwap = false;
+  let reefFrame = 0;
+  const reefCache = new Map();
+  const geo = {
+    rockVB: null, rockIB: null, rockCount: 0,
+    sandVB: null, sandIB: null, sandCount: 0,
+    coralVB: null, coralIB: null, coralInstB: null,
+    draws: [],
+  };
+  function retire(buffers) {
+    const drop = () => { for (const b of buffers) if (b) b.destroy(); };
+    const pending = device.queue.onSubmittedWorkDone && device.queue.onSubmittedWorkDone();
+    if (pending && typeof pending.then === 'function') pending.then(drop, drop);
+    else drop();
   }
-  const rockVB = buffer(rockV, BU.VERTEX, 'rock');
-  const rockIB = buffer(rock.indices, BU.INDEX, 'rock idx');
-  const sandVB = buffer(reef.sand.vertices, BU.VERTEX, 'sand');
-  const sandIB = buffer(reef.sand.indices, BU.INDEX, 'sand idx');
-
-  // corals: every variant in one vertex/index buffer, instances grouped per variant
-  const coral = reef.corals;
-  const groups = new Map();
-  for (const inst of coral.instances) {
-    const k = inst.name + '#' + inst.variant;
-    if (!groups.has(k)) groups.set(k, []);
-    groups.get(k).push(inst);
-  }
-  let nV = 0, nI = 0;
-  for (const k of groups.keys()) {
-    const [name, v] = k.split('#');
-    const m = coral.variants[name][Number(v)];
-    nV += m.vertices.length / CORAL_STRIDE;
-    nI += m.indices.length;
-  }
-  const coralV = new Float32Array(nV * CORAL_STRIDE), coralI = new Uint32Array(nI);
-  const coralInst = new Float32Array(coral.instances.length * 24);
-  const coralDraws = [];
-  {
-    let vo = 0, io = 0, ii = 0;
-    for (const [k, list] of groups) {
+  function uploadReef(next) {
+    const rock = next.rock;
+    const rockV = new Float32Array(rock.count * 7);
+    for (let i = 0; i < rock.count; i++) {
+      rockV.set(rock.positions.subarray(i * 3, i * 3 + 3), i * 7);
+      rockV.set(rock.normals.subarray(i * 3, i * 3 + 3), i * 7 + 3);
+      rockV[i * 7 + 6] = rock.ao[i];
+    }
+    const coral = next.corals;
+    const groups = new Map();
+    for (const inst of coral.instances) {
+      const k = inst.name + '#' + inst.variant;
+      if (!groups.has(k)) groups.set(k, []);
+      groups.get(k).push(inst);
+    }
+    let nV = 0, nI = 0;
+    for (const k of groups.keys()) {
       const [name, v] = k.split('#');
       const m = coral.variants[name][Number(v)];
-      coralV.set(m.vertices, vo * CORAL_STRIDE);
-      coralI.set(m.indices, io);
-      for (const c of list) {
-        const o = ii * 24, s = c.scale, b = c.b;
-        coralInst.set([b.r[0] * s, b.r[1] * s, b.r[2] * s, c.type,
-          b.u[0] * s, b.u[1] * s, b.u[2] * s, c.sway,
-          b.f[0] * s, b.f[1] * s, b.f[2] * s, c.phase,
-          c.pos[0], c.pos[1], c.pos[2], c.ao,
-          c.colorA[0], c.colorA[1], c.colorA[2], 0,
-          c.colorB[0], c.colorB[1], c.colorB[2], 0], o);
-        ii++;
+      nV += m.vertices.length / CORAL_STRIDE;
+      nI += m.indices.length;
+    }
+    const coralV = new Float32Array(nV * CORAL_STRIDE), coralI = new Uint32Array(nI);
+    const coralInst = new Float32Array(Math.max(1, coral.instances.length) * 24);
+    const draws = [];
+    {
+      let vo = 0, io = 0, ii = 0;
+      for (const [k, list] of groups) {
+        const [name, v] = k.split('#');
+        const m = coral.variants[name][Number(v)];
+        coralV.set(m.vertices, vo * CORAL_STRIDE);
+        coralI.set(m.indices, io);
+        for (const c of list) {
+          const o = ii * 24, s = c.scale, b = c.b;
+          coralInst.set([b.r[0] * s, b.r[1] * s, b.r[2] * s, c.type,
+            b.u[0] * s, b.u[1] * s, b.u[2] * s, c.sway,
+            b.f[0] * s, b.f[1] * s, b.f[2] * s, c.phase,
+            c.pos[0], c.pos[1], c.pos[2], c.ao,
+            c.colorA[0], c.colorA[1], c.colorA[2], 0,
+            c.colorB[0], c.colorB[1], c.colorB[2], 0], o);
+          ii++;
+        }
+        draws.push({ firstIndex: io, indexCount: m.indices.length, baseVertex: vo, firstInstance: ii - list.length, instanceCount: list.length, soft: SOFT_TYPES.has(list[0].type) });
+        vo += m.vertices.length / CORAL_STRIDE;
+        io += m.indices.length;
       }
-      coralDraws.push({ firstIndex: io, indexCount: m.indices.length, baseVertex: vo, firstInstance: ii - list.length, instanceCount: list.length, soft: SOFT_TYPES.has(list[0].type) });
-      vo += m.vertices.length / CORAL_STRIDE;
-      io += m.indices.length;
+    }
+    const made = {
+      rockVB: buffer(rockV, BU.VERTEX, 'rock'),
+      rockIB: buffer(rock.indices, BU.INDEX, 'rock idx'),
+      rockCount: rock.indices.length,
+      sandVB: buffer(next.sand.vertices, BU.VERTEX, 'sand'),
+      sandIB: buffer(next.sand.indices, BU.INDEX, 'sand idx'),
+      sandCount: next.sand.indices.length,
+      coralVB: buffer(coralV, BU.VERTEX, 'coral'),
+      coralIB: buffer(coralI, BU.INDEX, 'coral idx'),
+      coralInstB: buffer(coralInst, BU.VERTEX, 'coral inst'),
+      draws,
+    };
+    const retired = [geo.rockVB, geo.rockIB, geo.sandVB, geo.sandIB, geo.coralVB, geo.coralIB, geo.coralInstB];
+    Object.assign(geo, made);
+    reef = next;
+    retire(retired);
+    log(`corals: ${coral.instances.length} instances, ${draws.length} meshes, ${nV} verts`);
+  }
+  function loadReef(sceneId, swap) {
+    const spec = reefSpec(sceneById(sceneId) ? sceneId : 'reef', cfg.seed);
+    if (spec.key === reefKey) return;
+    let built = reefCache.get(spec.key);
+    if (!built) {
+      const tReef = performance.now();
+      built = buildReef(spec.seed, spec.formation);
+      reefCache.set(spec.key, built);
+      log(`reef built in ${(performance.now() - tReef).toFixed(0)} ms`);
+    }
+    uploadReef(built);
+    reefKey = spec.key;
+    if (swap) {
+      renderStaticShadow();
+      restock();
     }
   }
-  const coralVB = buffer(coralV, BU.VERTEX, 'coral');
-  const coralIB = buffer(coralI, BU.INDEX, 'coral idx');
-  const coralInstB = buffer(coralInst, BU.VERTEX, 'coral inst');
-  log(`corals: ${coral.instances.length} instances, ${coralDraws.length} meshes, ${nV} verts`);
+  function queueReef(sceneId) {
+    if (!reefSwap || sceneId === 'custom' || !sceneById(sceneId)) return;
+    cancelAnimationFrame(reefFrame);
+    reefFrame = requestAnimationFrame(() => loadReef(sceneId, true));
+  }
+  loadReef(cfg.environment.scene, false);
 
   // fish: one mesh + instance buffer + species uniform per species
   const distribution = VIEW === 'lineup' ? Object.fromEntries(SPECIES_KEYS.map((k) => [k, 0])) : resolvePopulation(cfg);
@@ -221,25 +268,53 @@ async function main() {
   }
   let fov = (cfg.camera.fovDegrees || 32) * Math.PI / 180;
   const eye = camBase.eye.slice(), target = camBase.target.slice();
+  let panPhase = 0;
   const view = new Float32Array(16), proj = new Float32Array(16), viewProj = new Float32Array(16), invViewProj = new Float32Array(16);
-  const L = [0.22, 1, 0.3];
-  { const l = Math.hypot(...L); L[0] /= l; L[1] /= l; L[2] /= l; }
+  const L = [0, 1, 0];
+  const sunRgb = [1, 0.97, 0.9];
   const lightViewProj = new Float32Array(16);
-  {
-    const c = [0, 1.8, -3.6];
+  let shadowStamp = '';
+  // High sun keeps the original shadow frustum. A lower sun (morning, sunset) needs a
+  // wider one so the tank still falls inside the map.
+  function updateLight() {
+    const e = cfg.environment;
+    L[0] = Number(e.lightX) || 0;
+    L[1] = Number(e.lightY) || 0;
+    L[2] = Number(e.lightZ) || 0;
+    const len = Math.hypot(L[0], L[1], L[2]) || 1;
+    L[0] /= len; L[1] /= len; L[2] /= len;
+    const rgb = linearColor(e.sunColor || '#fffbf3');
+    sunRgb[0] = rgb[0]; sunRgb[1] = rgb[1]; sunRgb[2] = rgb[2];
     const lv = new Float32Array(16), lp = new Float32Array(16);
-    lookAt(lv, [c[0] + L[0] * 20, c[1] + L[1] * 20, c[2] + L[2] * 20], c, [0, 0, -1]);
-    ortho(lp, -14.5, 14.5, -9, 9, 2, 40);
+    const c = [0, 1.8, -3.6];
+    const up = L[1] > 0.75 ? [0, 0, -1] : [0, 1, 0];
+    lookAt(lv, [c[0] + L[0] * 20, c[1] + L[1] * 20, c[2] + L[2] * 20], c, up);
+    if (L[1] > 0.75) ortho(lp, -14.5, 14.5, -9, 9, 2, 40);
+    else ortho(lp, -18, 18, -12, 12, 1.2, 48);
     mat4Mul(lightViewProj, lp, lv);
   }
-  function updateCamera(time, aspect) {
-    if (cfg.camera.movementEnabled && VIEW !== 'lineup') {
-      // a few centimetres of lateral drift over minutes: felt more than seen
-      const s = cfg.camera.movementSpeed;
-      const a = Math.sin(time * 0.011 * s) * 0.7 + Math.sin(time * 0.0047 * s + 1.3) * 0.3;
-      eye[0] = camBase.eye[0] + a * 0.6;
-      eye[1] = camBase.eye[1] + Math.sin(time * 0.0073 * s + 0.4) * 0.08;
-      target[0] = camBase.target[0] + a * 0.35;
+  function updateCamera(dt, aspect) {
+    const enabled = cfg.camera.movementEnabled && VIEW !== 'lineup';
+    const speed = enabled ? Math.max(0, Number(cfg.camera.movementSpeed) || 0) : 0;
+    panPhase += dt * speed;
+    // One slow sweep across the reef, plus a smaller rise and fall so the path does not repeat.
+    // At speed 1 a side-to-side pass takes about half a minute.
+    const sway = enabled ? Math.sin(panPhase * 0.1) : 0;
+    const bob = enabled ? Math.sin(panPhase * 0.043 + 0.8) : 0;
+    const goalEye = [
+      camBase.eye[0] + sway * 1.1,
+      camBase.eye[1] + bob * 0.32,
+      camBase.eye[2] - Math.abs(sway) * 0.55,
+    ];
+    const goalTarget = [
+      camBase.target[0] + sway * 4.8,
+      camBase.target[1] + bob * 0.2,
+      camBase.target[2],
+    ];
+    const k = dt > 0 ? 1 - Math.exp(-dt * 2.4) : 1;
+    for (let i = 0; i < 3; i++) {
+      eye[i] += (goalEye[i] - eye[i]) * k;
+      target[i] += (goalTarget[i] - target[i]) * k;
     }
     lookAt(view, eye, target, [0, 1, 0]);
     perspective(proj, fov, aspect, 0.5, 80);
@@ -387,7 +462,7 @@ async function main() {
     const f = frameF;
     f.set(viewProj, 0); f.set(invViewProj, 16); f.set(lightViewProj, 32);
     f[48] = eye[0]; f[49] = eye[1]; f[50] = eye[2]; f[51] = shaderTime;
-    f[52] = L[0]; f[53] = L[1]; f[54] = L[2]; f[55] = 2.4;
+    f[52] = L[0]; f[53] = L[1]; f[54] = L[2]; f[55] = env.sunIntensity;
     f[56] = deep[0]; f[57] = deep[1]; f[58] = deep[2]; f[59] = env.waterClarity;
     f[60] = shallow[0]; f[61] = shallow[1]; f[62] = shallow[2]; f[63] = env.ambientLightIntensity;
     f[64] = current.x; f[65] = current.y; f[66] = current.z; f[67] = cfg.effects.coralAnimationEnabled ? 1 : 0;
@@ -398,24 +473,28 @@ async function main() {
       const s = bubbleSources()[i];
       f[80 + i * 4] = s ? s[0] : 0; f[81 + i * 4] = s ? s[1] : 0; f[82 + i * 4] = s ? s[2] : 0; f[83 + i * 4] = s ? 1 : 0;
     }
+    f[104] = sunRgb[0]; f[105] = sunRgb[1]; f[106] = sunRgb[2]; f[107] = 0;
     device.queue.writeBuffer(frameUB, 0, f);
   }
 
-  // static casters (rock and hard corals) are rendered once
-  writeFrame(0, 1, 1);
-  {
+  // static casters (rock and hard corals) are rendered once, and again when the sun moves
+  function renderStaticShadow() {
+    writeFrame(0, 1, 1);
     const enc = device.createCommandEncoder();
     const pass = enc.beginRenderPass({ colorAttachments: [], depthStencilAttachment: { view: staticShadow.createView(), depthClearValue: 1, depthLoadOp: 'clear', depthStoreOp: 'store' } });
     pass.setBindGroup(0, shadowBG);
     pass.setPipeline(rockShadowPipe);
-    pass.setVertexBuffer(0, rockVB); pass.setIndexBuffer(rockIB, 'uint32');
-    pass.drawIndexed(rock.indices.length);
+    pass.setVertexBuffer(0, geo.rockVB); pass.setIndexBuffer(geo.rockIB, 'uint32');
+    pass.drawIndexed(geo.rockCount);
     pass.setPipeline(coralShadowPipe);
-    pass.setVertexBuffer(0, coralVB); pass.setVertexBuffer(1, coralInstB); pass.setIndexBuffer(coralIB, 'uint32');
-    for (const d of coralDraws) if (!d.soft) pass.drawIndexed(d.indexCount, d.instanceCount, d.firstIndex, d.baseVertex, d.firstInstance);
+    pass.setVertexBuffer(0, geo.coralVB); pass.setVertexBuffer(1, geo.coralInstB); pass.setIndexBuffer(geo.coralIB, 'uint32');
+    for (const d of geo.draws) if (!d.soft) pass.drawIndexed(d.indexCount, d.instanceCount, d.firstIndex, d.baseVertex, d.firstInstance);
     pass.end();
     device.queue.submit([enc.finish()]);
   }
+  updateLight();
+  shadowStamp = L.map((n) => n.toFixed(4)).join(',');
+  renderStaticShadow();
 
   // ------------------------------------------------------------------------------------
   // Render targets (recreated on resize)
@@ -556,7 +635,7 @@ async function main() {
     drift[1] = (drift[1] + current.y * dt * 0.22 + 7.7) % 7.7;
     drift[2] = (drift[2] + current.z * dt * 0.22 + 7.95) % 7.95;
 
-    updateCamera(time, W / H);
+    updateCamera(dt, W / H);
     const cpu0 = performance.now();
     if (VIEW === 'lineup') writeLineup(time);
     else {
@@ -580,8 +659,8 @@ async function main() {
       const pass = enc.beginRenderPass(passes.shadow);
       pass.setBindGroup(0, shadowBG);
       pass.setPipeline(coralShadowPipe);
-      pass.setVertexBuffer(0, coralVB); pass.setVertexBuffer(1, coralInstB); pass.setIndexBuffer(coralIB, 'uint32');
-      for (const d of coralDraws) if (d.soft) pass.drawIndexed(d.indexCount, d.instanceCount, d.firstIndex, d.baseVertex, d.firstInstance);
+      pass.setVertexBuffer(0, geo.coralVB); pass.setVertexBuffer(1, geo.coralInstB); pass.setIndexBuffer(geo.coralIB, 'uint32');
+      for (const d of geo.draws) if (d.soft) pass.drawIndexed(d.indexCount, d.instanceCount, d.firstIndex, d.baseVertex, d.firstInstance);
       pass.setPipeline(fishShadowPipe);
       for (const key in fishSlots) {
         const s = fishSlots[key];
@@ -599,14 +678,14 @@ async function main() {
       });
       pass.setBindGroup(0, frameBG);
       pass.setPipeline(rockPipe);
-      pass.setVertexBuffer(0, rockVB); pass.setIndexBuffer(rockIB, 'uint32');
-      pass.drawIndexed(rock.indices.length);
+      pass.setVertexBuffer(0, geo.rockVB); pass.setIndexBuffer(geo.rockIB, 'uint32');
+      pass.drawIndexed(geo.rockCount);
       pass.setPipeline(sandPipe);
-      pass.setVertexBuffer(0, sandVB); pass.setIndexBuffer(sandIB, 'uint32');
-      pass.drawIndexed(reef.sand.indices.length);
+      pass.setVertexBuffer(0, geo.sandVB); pass.setIndexBuffer(geo.sandIB, 'uint32');
+      pass.drawIndexed(geo.sandCount);
       pass.setPipeline(coralPipe);
-      pass.setVertexBuffer(0, coralVB); pass.setVertexBuffer(1, coralInstB); pass.setIndexBuffer(coralIB, 'uint32');
-      for (const d of coralDraws) pass.drawIndexed(d.indexCount, d.instanceCount, d.firstIndex, d.baseVertex, d.firstInstance);
+      pass.setVertexBuffer(0, geo.coralVB); pass.setVertexBuffer(1, geo.coralInstB); pass.setIndexBuffer(geo.coralIB, 'uint32');
+      for (const d of geo.draws) pass.drawIndexed(d.indexCount, d.instanceCount, d.firstIndex, d.baseVertex, d.firstInstance);
       pass.setPipeline(fishPipe);
       for (const key in fishSlots) {
         const s = fishSlots[key];
@@ -716,8 +795,15 @@ async function main() {
     audio.apply(cfg.audio);
   }
   let widgets = null;
+  reefSwap = true;
   const settings = createSettings(cfg, visitOnly, (path) => {
-    if (path === 'environment.waterColor') refreshWater();
+    if (path === 'environment.waterColor' || path === 'environment.scene') refreshWater();
+    if (path === 'environment.scene') queueReef(cfg.environment.scene);
+    if (path === 'environment.scene' || path === 'environment.waterColor' || path === 'environment.sunColor' || path.startsWith('environment.light')) {
+      updateLight();
+      const stamp = L.map((n) => n.toFixed(4)).join(',');
+      if (stamp !== shadowStamp) { shadowStamp = stamp; renderStaticShadow(); }
+    }
     if (path === 'camera.fovDegrees') fov = cfg.camera.fovDegrees * Math.PI / 180;
     if (path === 'display.targetFps') { fpsTarget = cfg.display.targetFps; nextDue = 0; }
     if (path === 'display.maxRenderScale' || path === 'display.minRenderScale') {

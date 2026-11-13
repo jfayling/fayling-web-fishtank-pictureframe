@@ -1,6 +1,7 @@
 // Aquarium configuration. Rendering and behavior code only read this object; nothing in the
 // simulation hard-codes these values. Override any key from the URL for development, e.g.
 //   ?fish.population=50&effects.bubblesEnabled=false&environment.waterClarity=0.7
+//   ?scene=sunset
 // or pass a whole JSON document as ?config=<base64url JSON>.
 
 export const DEFAULT_CONFIG = {
@@ -17,6 +18,7 @@ export const DEFAULT_CONFIG = {
   },
 
   environment: {
+    scene: 'reef',         // reef | lagoon | morning | sunset | moonlight | deep | custom
     waterColor: '#0b5f8c',
     waterClarity: 1.0,     // 1 = clear reef tank; lower is hazier
     ambientLightIntensity: 1.0,
@@ -25,6 +27,12 @@ export const DEFAULT_CONFIG = {
     lightRayIntensity: 1.0,
     bloom: 0.05,
     exposure: 1.0,
+    // Sun colour and direction. Scenes set these; they are not separate panel sliders.
+    sunColor: '#fffbf3',
+    sunIntensity: 2.4,
+    lightX: 0.22,
+    lightY: 1,
+    lightZ: 0.3,
   },
 
   fish: {
@@ -57,7 +65,7 @@ export const DEFAULT_CONFIG = {
   },
 
   camera: {
-    movementEnabled: false,  // optional, almost imperceptible pan across the reef
+    movementEnabled: false,  // slow sweep across the reef; off until turned on
     movementSpeed: 1.0,
     fovDegrees: 32,
   },

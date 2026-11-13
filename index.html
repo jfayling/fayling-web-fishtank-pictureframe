@@ -20,6 +20,11 @@
   #sound::before { content: '♪'; display: inline-block; width: 16px; opacity: .7; }
   #sound.on, #settings.on { border-color: #e2a04eaa; opacity: 1; }
   #sound.on::before { opacity: 1; }
+  #scene-label { position: fixed; left: 50%; bottom: 28px; z-index: 2; transform: translateX(-50%);
+                 padding: 7px 14px; border: 1px solid #e5e1d822; border-radius: 8px; background: #0b0f1488;
+                 color: #e5e1d8; font: 13px/1.3 system-ui, sans-serif; letter-spacing: .04em; white-space: nowrap;
+                 backdrop-filter: blur(6px); pointer-events: none; opacity: 0; transition: opacity .45s ease; }
+  #scene-label.show { opacity: .9; }
   #panel { position: fixed; z-index: 3; right: 12px; top: 50px; width: 330px; max-height: calc(100vh - 60px);
            display: flex; flex-direction: column; overflow: hidden; border-radius: 8px;
            background: #0b0f14c8; backdrop-filter: blur(6px); color: #e5e1d8; font: 12px/1.3 system-ui, sans-serif; }
@@ -179,9 +184,11 @@
 <canvas id="c"></canvas>
 <div id="hud"></div>
 <div id="toolbar">
+  <button id="scene" type="button" title="Next scene (])">Day reef</button>
   <button id="sound" type="button" aria-pressed="false" title="Toggle aquarium audio (M)">Sound off</button>
   <button id="settings" type="button" aria-expanded="false" title="Show settings (F1)">Settings</button>
 </div>
+<div id="scene-label" aria-live="polite" aria-hidden="true"></div>
 <div id="panel" class="hidden">
   <div class="panel-bar">
     <span>Settings</span>

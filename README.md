@@ -38,7 +38,15 @@ across species in proportion to `speciesDistribution` (at most one moray).
 
 The on-screen settings panel follows the ocean picture frame: a dim **Settings** button
 (F1 or H), sections for the tank, fish, effects, camera, sound and widgets, and Export,
-Import, Share link and Reset. Changes apply immediately and are remembered in this browser.
+Import, Share link and Reset. The tank scene is a lighting preset — Day reef, Lagoon,
+Morning, Sunset, Moonlight, or Deep water. Pick one under Settings → Tank, click the
+scene name on the toolbar (shift-click for the previous one), or press `]` and `[`.
+Choosing a scene sets the water, the sun, and the rock and coral. Day reef is the
+original layout; each of the others is its own formation. The first time a formation
+is shown it is generated, and then kept for the rest of the visit. Editing the water
+or the light yourself keeps the result as Custom, on the formation you were viewing.
+`?scene=sunset` shows that scene for one visit. Changes apply
+immediately and are remembered in this browser.
 Sound toggles with the toolbar button or M. T shows or hides the clock, and F shows or
 hides the weather. Esc closes the panel, or the location search when that is open.
 `?info=1` shows the frame-rate readout for that visit.
@@ -55,6 +63,7 @@ side), `?cam=x,y,z,tx,ty,tz` (camera override), `?t=seconds`, `?w=&h=` (forced s
 
 | Module | Role |
 | --- | --- |
+| `js/scenes.js` | Named tank scenes: water, sun, and which rock and coral formation to build |
 | `js/reef.js` | Live rock as a metaball density field with domain warp and carved tunnels (moray cave, swim-throughs, arch, overhang), meshed with surface nets; baked AO; sand heightfield; coral placement; the obstacle field the fish steer by |
 | `js/coral-mesh.js` | Generators for staghorn, brain, mushroom, plate, sea fan, leather, bubble, anemone, finger coral, stones and shell fragments |
 | `js/species.js` | Per-species anatomy (body profiles, fins, eyes), swimming style, and behaviour parameters |

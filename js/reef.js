@@ -76,7 +76,8 @@ const yawAxes = (yaw) => {
   return [[c, 0, -s], [0, 1, 0], [s, 0, c]];
 };
 
-function layoutRock(rng) {
+function layoutRock(rng, style) {
+  if (style) return layoutStyled(rng, style);
   const blobs = [];
   const massif = (cx, cz, rx, rz, h, count, smin, smax, flat = 1) => {
     // grounded base layer
@@ -128,6 +129,159 @@ function layoutRock(rng) {
   return { blobs, tunnels, moray: { inner: [5.7, 0.95, -3.45], outer: [3.35, 0.82, -0.5] } };
 }
 
+// Same blob scatter as the classic reef, aimed by a scene's massif list.
+function layoutStyled(rng, style) {
+  const blobs = [];
+  const massif = (cx, cz, rx, rz, h, count, smin, smax, flat = 1) => {
+    const baseN = Math.ceil(count * 0.3);
+    for (let k = 0; k < baseN; k++) {
+      const a = rng.next() * TAU, rr = Math.sqrt(rng.next()) * 0.85;
+      const s = smax * (0.9 + rng.next() * 0.4);
+      blobs.push({ x: cx + Math.cos(a) * rr * rx, y: 0.05 + rng.next() * 0.25, z: cz + Math.sin(a) * rr * rz,
+        rx: s * 1.2, ry: s * 0.6, rz: s * 1.05, yaw: rng.next() * TAU });
+    }
+    for (let k = 0; k < count; k++) {
+      const a = rng.next() * TAU, rr = Math.sqrt(rng.next());
+      const fall = 1 - rr * rr * 0.75;
+      const y = Math.pow(rng.next(), 0.75) * h * fall;
+      const s = lerp(smax, smin, y / h) * (0.7 + rng.next() * 0.5);
+      blobs.push({ x: cx + Math.cos(a) * rr * rx, y, z: cz + Math.sin(a) * rr * rz,
+        rx: s * (1 + rng.next() * 0.5), ry: s * (0.55 + rng.next() * 0.45) * flat, rz: s * (0.85 + rng.next() * 0.4), yaw: rng.next() * TAU });
+    }
+  };
+  for (const m of style.massifs) massif(...m);
+  for (const b of style.blobs) blobs.push(b);
+  return { blobs, tunnels: style.tunnels, moray: style.moray };
+}
+
+// Rock arrangements for every scene except Day reef, which keeps the original layout.
+// massifs: cx, cz, rx, rz, height, blob count, small, large, optional flatness.
+// Each one keeps a moray cave and rocks under the anemones.
+export const FORMATIONS = {
+  lagoon: {
+    seed: 12011,
+    massifs: [
+      [-6.2, -2.2, 1.6, 1.3, 1.5, 28, 0.3, 0.7, 0.75],
+      [-1.5, -3.4, 1.8, 1.4, 1.35, 26, 0.28, 0.65, 0.7],
+      [3.2, -2.0, 1.5, 1.2, 1.45, 24, 0.28, 0.7, 0.75],
+      [7.0, -3.3, 1.8, 1.5, 1.6, 22, 0.3, 0.75, 0.7],
+      [0.4, -5.6, 3.2, 1.1, 1.2, 30, 0.35, 0.7, 0.65],
+    ],
+    blobs: [
+      { x: -4.2, y: 0.35, z: -1.7, rx: 0.8, ry: 0.4, rz: 0.65, yaw: 0.4 },
+      { x: 1.1, y: 0.4, z: -1.85, rx: 0.75, ry: 0.38, rz: 0.6, yaw: 1.1 },
+      { x: 5.4, y: 0.35, z: -1.6, rx: 0.7, ry: 0.36, rz: 0.55, yaw: 0.2 },
+      { x: -7.2, y: 0.7, z: -2.4, rx: 1.5, ry: 0.9, rz: 1.4, yaw: 0.6 },
+    ],
+    tunnels: [
+      { a: [-6.2, 0.55, -1.3], b: [-8.0, 0.7, -3.3], r: 0.32 },
+    ],
+    moray: { inner: [-8.0, 0.7, -3.3], outer: [-6.2, 0.55, -1.3] },
+    anemones: [[-4.2, -1.55, 1.15], [1.1, -1.7, 1.2], [5.4, -1.45, 1.05]],
+    coral: { staghorn: 8, fan: 3, brain: 16, leather: 6, plate: 6, finger: 8, bubble: 6, staghorn2: 4, finger2: 6, brain2: 10, mushrooms: 16, sandBrain: 6, stones: 80, shells: 40 },
+  },
+  morning: {
+    seed: 33407,
+    massifs: [
+      [-5.5, -2.6, 2.4, 1.6, 2.2, 40, 0.32, 0.85],
+      [0.2, -2.3, 2.8, 1.5, 1.8, 44, 0.3, 0.8, 0.85],
+      [5.8, -2.7, 2.3, 1.6, 2.4, 40, 0.32, 0.9],
+      [0, -5.2, 5.5, 1.2, 2.8, 48, 0.4, 1.0, 0.9],
+      [-3.2, -1.15, 0.7, 0.4, 0.6, 6, 0.2, 0.35],
+    ],
+    blobs: [
+      { x: -2.2, y: 0.5, z: -1.6, rx: 0.85, ry: 0.45, rz: 0.7, yaw: 0.3 },
+      { x: 2.4, y: 0.55, z: -1.7, rx: 0.8, ry: 0.42, rz: 0.65, yaw: 1.2 },
+      { x: 6.6, y: 0.5, z: -1.9, rx: 0.75, ry: 0.4, rz: 0.6, yaw: 0.5 },
+      { x: -6.8, y: 1.1, z: -2.5, rx: 1.6, ry: 1.15, rz: 1.5, yaw: 0.4 },
+      { x: 0.2, y: 1.7, z: -2.5, rx: 1.6, ry: 0.35, rz: 0.55, yaw: 0.1 },
+    ],
+    tunnels: [
+      { a: [-5.6, 0.7, -1.2], b: [-7.6, 0.9, -3.5], r: 0.34 },
+      { a: [-1.2, 1.15, -2.0], b: [1.4, 1.2, -3.2], r: 0.42 },
+    ],
+    moray: { inner: [-7.6, 0.9, -3.5], outer: [-5.6, 0.7, -1.2] },
+    anemones: [[-2.2, -1.45, 1.2], [2.4, -1.55, 1.15], [6.6, -1.75, 1.05]],
+    coral: { staghorn: 26, fan: 6, brain: 8, leather: 8, plate: 8, finger: 20, bubble: 6, staghorn2: 14, finger2: 12, brain2: 6, mushrooms: 8 },
+  },
+  sunset: {
+    seed: 55103,
+    massifs: [
+      [-7.4, -2.8, 1.8, 1.6, 3.6, 36, 0.4, 1.05],
+      [6.2, -2.6, 2.4, 1.8, 4.2, 52, 0.4, 1.15],
+      [2.0, -5.4, 2.2, 1.2, 3.2, 28, 0.4, 0.95],
+      [-1.0, -1.2, 0.5, 0.4, 0.5, 5, 0.2, 0.35],
+    ],
+    blobs: [
+      { x: 5.4, y: 1.15, z: -2.3, rx: 1.8, ry: 1.35, rz: 1.7, yaw: 0.3 },
+      { x: -6.5, y: 2.4, z: -2.2, rx: 1.3, ry: 0.4, rz: 0.7, yaw: -0.3 },
+      { x: -3.4, y: 0.45, z: -1.7, rx: 0.8, ry: 0.42, rz: 0.65, yaw: 0.8 },
+      { x: 1.6, y: 0.4, z: -2.4, rx: 0.7, ry: 0.38, rz: 0.6, yaw: 0.2 },
+      { x: 8.2, y: 0.55, z: -1.8, rx: 0.75, ry: 0.4, rz: 0.6, yaw: 1.0 },
+    ],
+    tunnels: [
+      { a: [4.2, 0.9, -0.7], b: [6.4, 1.05, -3.5], r: 0.32 },
+      { a: [5.5, 2.3, -1.2], b: [6.6, 2.4, -3.2], r: 0.48 },
+      { a: [-6.0, 1.5, -1.3], b: [-7.2, 1.6, -3.4], r: 0.4 },
+    ],
+    moray: { inner: [6.4, 1.05, -3.5], outer: [4.2, 0.9, -0.7] },
+    anemones: [[-3.4, -1.55, 1.1], [1.6, -2.2, 1.15], [8.2, -1.65, 1.0]],
+    coral: { staghorn: 10, fan: 14, brain: 8, leather: 6, plate: 18, finger: 8, bubble: 5, staghorn2: 4, finger2: 4, brain2: 4, mushrooms: 6 },
+  },
+  moonlight: {
+    seed: 77213,
+    massifs: [
+      [0, -4.3, 6.5, 1.3, 3.4, 55, 0.4, 1.05, 0.95],
+      [-7.6, -2.6, 1.7, 1.8, 2.8, 32, 0.35, 0.95],
+      [7.6, -2.6, 1.7, 1.8, 2.6, 32, 0.35, 0.95],
+      [-2.2, -1.3, 0.7, 0.45, 0.7, 6, 0.2, 0.4],
+      [2.6, -1.25, 0.65, 0.4, 0.65, 6, 0.2, 0.38],
+    ],
+    blobs: [
+      { x: -5.5, y: 1.0, z: -2.6, rx: 1.6, ry: 1.2, rz: 1.5, yaw: 0.5 },
+      { x: 0.2, y: 2.15, z: -3.6, rx: 1.5, ry: 0.4, rz: 0.7, yaw: 0.15 },
+      { x: -2.4, y: 0.45, z: -1.55, rx: 0.8, ry: 0.4, rz: 0.65, yaw: 0.6 },
+      { x: 2.8, y: 0.42, z: -1.5, rx: 0.75, ry: 0.38, rz: 0.6, yaw: 1.1 },
+      { x: -7.0, y: 0.5, z: -1.8, rx: 0.7, ry: 0.36, rz: 0.55, yaw: 0.2 },
+    ],
+    tunnels: [
+      { a: [-4.4, 0.75, -1.2], b: [-6.4, 0.9, -3.6], r: 0.32 },
+      { a: [0.2, 1.3, -2.6], b: [0.2, 1.35, -5.4], r: 0.55 },
+    ],
+    moray: { inner: [-6.4, 0.9, -3.6], outer: [-4.4, 0.75, -1.2] },
+    anemones: [[-2.4, -1.4, 1.1], [2.8, -1.35, 1.15], [-7.0, -1.65, 0.95]],
+    coral: { staghorn: 8, fan: 8, brain: 10, leather: 14, plate: 10, finger: 8, bubble: 14, staghorn2: 4, finger2: 4, brain2: 6, mushrooms: 8 },
+  },
+  deep: {
+    seed: 99041,
+    massifs: [
+      [-6.8, -3.0, 1.5, 2.4, 4.4, 48, 0.45, 1.2],
+      [6.8, -3.0, 1.5, 2.4, 4.2, 48, 0.45, 1.15],
+      [0, -7.2, 3, 1.2, 3.5, 24, 0.5, 1.1],
+      [-2.4, -1.4, 0.45, 0.35, 0.4, 4, 0.18, 0.3],
+    ],
+    blobs: [
+      { x: -6.2, y: 1.2, z: -2.5, rx: 1.7, ry: 1.3, rz: 1.6, yaw: 0.4 },
+      { x: -1.5, y: 0.35, z: -2.2, rx: 0.65, ry: 0.32, rz: 0.5, yaw: 0.7 },
+      { x: 1.8, y: 0.32, z: -2.6, rx: 0.6, ry: 0.3, rz: 0.5, yaw: 0.2 },
+      { x: 6.4, y: 0.45, z: -1.7, rx: 0.7, ry: 0.35, rz: 0.55, yaw: 1.0 },
+    ],
+    tunnels: [
+      { a: [-4.8, 0.85, -0.9], b: [-7.2, 1.05, -3.8], r: 0.34 },
+      { a: [-6.5, 2.4, -1.5], b: [-7.2, 2.5, -4.2], r: 0.42 },
+    ],
+    moray: { inner: [-7.2, 1.05, -3.8], outer: [-4.8, 0.85, -0.9] },
+    anemones: [[-1.5, -2.05, 1.0], [1.8, -2.4, 0.95], [6.4, -1.55, 1.05]],
+    coral: { staghorn: 6, fan: 6, brain: 6, leather: 4, plate: 8, finger: 5, bubble: 4, staghorn2: 3, finger2: 3, brain2: 3, mushrooms: 4, stones: 220, shells: 40 },
+  },
+};
+
+export function reefSpec(sceneId, configSeed) {
+  const style = FORMATIONS[sceneId];
+  if (!style) return { key: 'reef:' + configSeed, seed: configSeed, formation: null };
+  return { key: sceneId + ':' + style.seed, seed: style.seed, formation: sceneId };
+}
+
 const PALETTES = {
   staghorn: [['#a98bb8', '#e7dcef'], ['#c9b596', '#f0e8d6'], ['#7f9a8a', '#bfe0e3'], ['#9c7c62', '#e6cfae'], ['#8d7fb6', '#b5d6ea']],
   brain: [['#7b6a3f', '#a9c08a'], ['#8a5a3c', '#d9b98a'], ['#5f7a55', '#c7d6a0'], ['#6c5a7a', '#bfa7c9'], ['#9a7b45', '#7fb0a6']],
@@ -144,7 +298,8 @@ const PALETTES = {
 const lin = (hex) => hexToRgb(hex).map(srgbToLinear);
 
 // ---- construction -------------------------------------------------------------------------
-export function buildReef(seed) {
+export function buildReef(seed, formation) {
+  const style = formation ? FORMATIONS[formation] : null;
   const t0 = performance.now();
   const rng = new Rng(seed);
   const noise = makeNoise(seed);
@@ -179,7 +334,7 @@ export function buildReef(seed) {
     }
   }
 
-  const layout = layoutRock(rng);
+  const layout = layoutRock(rng, style);
   for (const b of layout.blobs) {
     const [ax, ay, az] = yawAxes(b.yaw);
     field.splat(b.x, b.y, b.z, ax, ay, az, b.rx / 0.7071, b.ry / 0.7071, b.rz / 0.7071, 1, warp);
@@ -228,7 +383,7 @@ export function buildReef(seed) {
   // ---- corals ---------------------------------------------------------------------------
   const obstacle = new Field(X0, Y0, Z0, h, nx, ny, nz);
   obstacle.data.set(field.data);
-  const corals = placeCorals(rng, rock, field, obstacle, sandHeight);
+  const corals = placeCorals(rng, rock, field, obstacle, sandHeight, style);
 
   // ---- cave for the moray -------------------------------------------------------------
   const m = layout.moray;
@@ -404,7 +559,7 @@ function buildSand(sandHeight, field) {
 }
 
 // ---- coral placement ------------------------------------------------------------------------
-function placeCorals(rng, rock, field, obstacle, sandHeight) {
+function placeCorals(rng, rock, field, obstacle, sandHeight, style) {
   const variants = {};   // type name -> [mesh, ...]
   const VCOUNT = { staghorn: 4, brain: 3, mushroom: 3, plate: 3, fan: 3, leather: 3, bubble: 2, anemone: 2, finger: 3, stone: 5, shell: 3 };
   for (const [name, n] of Object.entries(VCOUNT)) {
@@ -467,6 +622,14 @@ function placeCorals(rng, rock, field, obstacle, sandHeight) {
     }
   }
   const upish = (k) => (n) => basis([n[0] * k, n[1] * k + (1 - k), n[2] * k], [Math.cos(rng.next() * TAU), 0, Math.sin(rng.next() * TAU)]);
+  const n = {
+    staghorn: 18, fan: 9, brain: 12, leather: 9, plate: 13, finger: 15, bubble: 8,
+    staghorn2: 10, finger2: 10, brain2: 8, mushrooms: 10, sandBrain: 2, stones: 170, shells: 70,
+  };
+  if (style && style.coral) Object.assign(n, style.coral);
+  const anemoneSpots = style && style.anemones
+    ? style.anemones
+    : [[-2.55, -1.6, 1.25], [5.3, -1.9, 1.0], [-6.6, -1.6, 0.95]];
 
   // anemones first: the clownfish host sits on the anemone rock in clear view
   const topAt = (tx, tz, rad) => {
@@ -478,27 +641,27 @@ function placeCorals(rng, rock, field, obstacle, sandHeight) {
     }
     return best;
   };
-  for (const [tx, tz, s] of [[-2.55, -1.6, 1.25], [5.3, -1.9, 1.0], [-6.6, -1.6, 0.95]]) {
+  for (const [tx, tz, s] of anemoneSpots) {
     const i = topAt(tx, tz, 0.6);
     if (i < 0) continue;
     const nrm = [Nn[i * 3], Nn[i * 3 + 1], Nn[i * 3 + 2]];
     add('anemone', rng.int(2), [P[i * 3], P[i * 3 + 1] - 0.03, P[i * 3 + 2]], upish(0.35)(nrm), s, { ao: AO[i] });
   }
-  scatter('staghorn', 18, (x, y, z, n, ao) => n[1] > 0.7 && ao > 0.48 && y > 0.9, [1.0, 1.6], upish(0.3));
-  scatter('fan', 9, (x, y, z, n, ao) => n[1] > 0.55 && z < -2.2 && y > 1.2 && ao > 0.5, [1.0, 1.7],
-    (n) => basis([n[0] * 0.15, 1, n[2] * 0.15], [Math.sin((rng.next() - 0.5) * 1.0), 0, Math.cos((rng.next() - 0.5) * 1.0)]), 0.8);
-  scatter('brain', 12, (x, y, z, n, ao) => n[1] > 0.7 && ao > 0.45, [0.6, 1.1], upish(0.5));
-  scatter('leather', 9, (x, y, z, n, ao) => n[1] > 0.72 && ao > 0.48, [1.0, 1.6], upish(0.3));
-  scatter('plate', 13, (x, y, z, n, ao) => n[1] > -0.15 && n[1] < 0.5 && n[2] > 0.2 && ao > 0.35 && y > 0.6, [0.7, 1.2],
-    (n) => basis([0, 1, 0], [n[0], 0, n[2]]));
-  scatter('finger', 15, (x, y, z, n, ao) => n[1] > 0.62 && ao > 0.42, [0.95, 1.5], upish(0.4));
-  scatter('bubble', 8, (x, y, z, n, ao) => n[1] > 0.3 && ao > 0.3 && ao < 0.8, [0.95, 1.4], upish(0.6));
+  scatter('staghorn', n.staghorn, (x, y, z, nrm, ao) => nrm[1] > 0.7 && ao > 0.48 && y > 0.9, [1.0, 1.6], upish(0.3));
+  scatter('fan', n.fan, (x, y, z, nrm, ao) => nrm[1] > 0.55 && z < -2.2 && y > 1.2 && ao > 0.5, [1.0, 1.7],
+    (nrm) => basis([nrm[0] * 0.15, 1, nrm[2] * 0.15], [Math.sin((rng.next() - 0.5) * 1.0), 0, Math.cos((rng.next() - 0.5) * 1.0)]), 0.8);
+  scatter('brain', n.brain, (x, y, z, nrm, ao) => nrm[1] > 0.7 && ao > 0.45, [0.6, 1.1], upish(0.5));
+  scatter('leather', n.leather, (x, y, z, nrm, ao) => nrm[1] > 0.72 && ao > 0.48, [1.0, 1.6], upish(0.3));
+  scatter('plate', n.plate, (x, y, z, nrm, ao) => nrm[1] > -0.15 && nrm[1] < 0.5 && nrm[2] > 0.2 && ao > 0.35 && y > 0.6, [0.7, 1.2],
+    (nrm) => basis([0, 1, 0], [nrm[0], 0, nrm[2]]));
+  scatter('finger', n.finger, (x, y, z, nrm, ao) => nrm[1] > 0.62 && ao > 0.42, [0.95, 1.5], upish(0.4));
+  scatter('bubble', n.bubble, (x, y, z, nrm, ao) => nrm[1] > 0.3 && ao > 0.3 && ao < 0.8, [0.95, 1.4], upish(0.6));
   // second, smaller generation filling the gaps
-  scatter('staghorn', 10, (x, y, z, n, ao) => n[1] > 0.6 && ao > 0.4, [0.6, 0.9], upish(0.4), 0.7);
-  scatter('finger', 10, (x, y, z, n, ao) => n[1] > 0.5 && ao > 0.4, [0.6, 0.9], upish(0.5), 0.7);
-  scatter('brain', 8, (x, y, z, n, ao) => n[1] > 0.55 && ao > 0.4, [0.35, 0.55], upish(0.6), 0.8);
+  scatter('staghorn', n.staghorn2, (x, y, z, nrm, ao) => nrm[1] > 0.6 && ao > 0.4, [0.6, 0.9], upish(0.4), 0.7);
+  scatter('finger', n.finger2, (x, y, z, nrm, ao) => nrm[1] > 0.5 && ao > 0.4, [0.6, 0.9], upish(0.5), 0.7);
+  scatter('brain', n.brain2, (x, y, z, nrm, ao) => nrm[1] > 0.55 && ao > 0.4, [0.35, 0.55], upish(0.6), 0.8);
   // mushroom clusters on low ledges
-  for (let c = 0; c < 10; c++) {
+  for (let c = 0; c < n.mushrooms; c++) {
     for (let tries = 0; tries < 500; tries++) {
       const i = cand[rng.int(cand.length)];
       const y = P[i * 3 + 1];
@@ -536,9 +699,9 @@ function placeCorals(rng, rock, field, obstacle, sandHeight) {
       made++;
     }
   };
-  onSand('brain', 2, [0.5, 0.75], true);
-  onSand('stone', 170, [0.06, 0.24], true);
-  onSand('shell', 70, [0.05, 0.1], false);
+  onSand('brain', n.sandBrain, [0.5, 0.75], true);
+  onSand('stone', n.stones, [0.06, 0.24], true);
+  onSand('shell', n.shells, [0.05, 0.1], false);
 
   return { variants, instances, anemones };
 }
