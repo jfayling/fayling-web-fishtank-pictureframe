@@ -22,6 +22,7 @@ import { Aquarium } from './behavior.js';
 import { sceneById } from './scenes.js';
 import { loadGltf, fishMeshFromModel } from './gltf.js';
 import { createAquariumAudio } from './audio.js';
+import { createSoundtrack } from './music.js';
 import { CAUSTIC_BAKE, CAUSTIC_SIZE, FRAME_FLOATS, SHADOW_SIZE } from './wgsl/common.js';
 import { FISH, FISH_SHADOW } from './wgsl/fish.js';
 import { ROCK, ROCK_SHADOW, SAND, CORAL, CORAL_SHADOW, BACKGROUND } from './wgsl/scene.js';
@@ -45,7 +46,48 @@ function log(msg) {
   console.log(msg);
   if (SHOT || qs.get('log') === '1') fetch('/__log', { method: 'POST', body: String(msg) }).catch(() => {});
 }
+const loadingEl = document.getElementById('loading');
+const loadingStatus = document.getElementById('loading-status');
+const loadingBar = document.getElementById('loading-bar');
+
+function reportLoad(message, amount) {
+  if (loadingStatus && loadingStatus.textContent !== message) loadingStatus.textContent = message;
+  if (loadingBar) loadingBar.style.transform = `scaleX(${amount})`;
+}
+// Two frames so the status paints before the next long compile. The timeout keeps startup
+// moving if the tab is not painting.
+function paintLoad(message, amount) {
+  reportLoad(message, amount);
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = () => { if (!settled) { settled = true; resolve(); } };
+    requestAnimationFrame(() => requestAnimationFrame(finish));
+    setTimeout(finish, 80);
+  });
+}
+function releaseApp() {
+  for (const id of ['c', 'hud', 'toolbar', 'clock-widget', 'weather-widget', 'scene-label', 'panel']) {
+    document.getElementById(id)?.removeAttribute('inert');
+  }
+}
+function dismissLoad() {
+  if (!loadingEl || loadingEl.classList.contains('done')) return;
+  releaseApp();
+  loadingEl.classList.add('done');
+  loadingEl.setAttribute('aria-busy', 'false');
+  const remove = () => { if (loadingEl.isConnected) loadingEl.remove(); };
+  loadingEl.addEventListener('transitionend', (event) => {
+    if (event.propertyName === 'opacity') remove();
+  });
+  setTimeout(remove, 2400);
+}
+function dropLoad() {
+  releaseApp();
+  loadingEl?.remove();
+}
+
 function fail(msg) {
+  dropLoad();
   const el = document.getElementById('err');
   el.textContent = msg;
   el.style.display = 'flex';
@@ -60,10 +102,12 @@ const linearColor = (hex) => hexToRgb(hex).map(srgbToLinear);
 
 async function main() {
   const { cfg, visitOnly } = prepareConfig();
+  await paintLoad('Looking for a graphics device', 0.08);
   if (!navigator.gpu) fail('WebGPU is not available in this browser.');
   const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
   if (!adapter) fail('No WebGPU adapter found.');
   const wantTimestamps = adapter.features.has('timestamp-query');
+  await paintLoad('Starting the graphics device', 0.16);
   let device;
   try {
     device = await adapter.requestDevice({ requiredFeatures: wantTimestamps ? ['timestamp-query'] : [] });
@@ -220,6 +264,7 @@ async function main() {
     cancelAnimationFrame(reefFrame);
     reefFrame = requestAnimationFrame(() => loadReef(sceneId, true));
   }
+  await paintLoad('Building the reef', 0.28);
   loadReef(cfg.environment.scene, false);
 
   // fish: one mesh + instance buffer + species uniform per species
@@ -239,6 +284,7 @@ async function main() {
   const STYLE = { 0: 0, 1: 1, 2: 2, 3: 3, 4: 4 };
   const fishSlots = {};
   const models = cfg.assets && cfg.assets.models || {};
+  await paintLoad('Stocking the fish', 0.46);
   for (const key of SPECIES_KEYS) {
     const def = SPECIES[key];
     const count = FISH_CAP;
@@ -447,6 +493,7 @@ async function main() {
     });
   }
 
+  await paintLoad('Preparing the tank', 0.64);
   const [rockPipe, sandPipe, coralPipe, fishPipe, bgPipe, particlePipe, bubblePipe,
     rockShadowPipe, coralShadowPipe, fishShadowPipe, raysPipe, raysUpPipe, causticPipe, downPipe, upPipe, compPipe] = await Promise.all([
     scenePipe('rock', ROCK, mainLayout, [rockLayout]),
@@ -552,6 +599,7 @@ async function main() {
     device.queue.submit([enc.finish()]);
     shadowRefresh = true;
   }
+  await paintLoad('Lighting the water', 0.84);
   updateLight();
   shadowStamp = L.map((n) => n.toFixed(4)).join(',');
   renderStaticShadow();
@@ -665,8 +713,9 @@ async function main() {
   // ------------------------------------------------------------------------------------
   const hud = document.getElementById('hud');
   let audio = cfg.audio.enabled ? createAquariumAudio(cfg.audio) : null;
+  const soundtrack = createSoundtrack(cfg.music, log);
   let time = Number(qs.get('t')) || 0, last = performance.now(), lastShown = 0, frameNo = 0, fade = SHOT ? 1 : 0;
-  let shooting = false, hudTimer = 0, hudFrames = 0, cpuMs = 0, nextDue = 0;
+  let shooting = false, hudTimer = 0, hudFrames = 0, cpuMs = 0, nextDue = 0, pictureShown = false;
   const curVec = { x: 0, y: 0, z: 0 };
   const passes = {
     shadow: { colorAttachments: [], depthStencilAttachment: { view: dynShadow.createView(), depthLoadOp: 'load', depthStoreOp: 'store' } },
@@ -823,6 +872,11 @@ async function main() {
       enc.copyTextureToBuffer({ texture: swapTex }, { buffer: readBuf, bytesPerRow: bpr }, [W, H]);
     }
     device.queue.submit([enc.finish()]);
+    if (!pictureShown) {
+      pictureShown = true;
+      reportLoad('Settling the water', 1);
+      dismissLoad();
+    }
     if (stamp) {
       ts.read.mapAsync(GPUMapMode.READ).then(() => {
         const r = new BigUint64Array(ts.read.getMappedRange());
@@ -897,6 +951,7 @@ async function main() {
   }
   let widgets = null;
   reefSwap = true;
+  await paintLoad('Opening the controls', 0.94);
   const settings = createSettings(cfg, visitOnly, (path) => {
     if (path === 'environment.waterColor' || path === 'environment.scene') refreshWater();
     if (path === 'environment.scene') queueReef(cfg.environment.scene);
@@ -914,6 +969,7 @@ async function main() {
     }
     if (path === 'display.fullscreen' && !cfg.display.fullscreen && document.fullscreenElement) document.exitFullscreen().catch(() => {});
     if (path.startsWith('audio.')) applyAudio();
+    if (path.startsWith('music.')) soundtrack.apply(cfg.music);
     if (path.startsWith('fish.') && VIEW !== 'lineup') {
       clearTimeout(restockTimer);
       restockTimer = setTimeout(restock, 200);
@@ -941,7 +997,13 @@ async function main() {
   document.body.classList.add('idle');
 
   resize();
+  reportLoad('Settling the water', 0.97);
   requestAnimationFrame(frame);
 }
 
-main().catch((e) => { if (!String(e.message).startsWith('WebGPU') && !String(e.message).startsWith('No WebGPU')) log('main failed: ' + (e.stack || e)); });
+main().catch((e) => {
+  dropLoad();
+  if (!String(e.message).startsWith('WebGPU') && !String(e.message).startsWith('No WebGPU') && !String(e.message).startsWith('Shader')) {
+    log('main failed: ' + (e.stack || e));
+  }
+});

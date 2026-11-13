@@ -4,7 +4,10 @@
 //            + currentInfluence + wandering (+ alignment + cohesion for schools)
 // Heading turns toward the steering intent at a limited angular rate, so a fish never
 // flips direction in a frame; it slows, banks and bends through the turn instead.
-// Neighbour queries use a spatial hash rebuilt every step. All vectors are preallocated.
+// A goal is kept only when open water lies straight to it, so a fish is not sent
+// through rock or coral. One that stalls against the reef turns toward open water
+// and picks again. Neighbour queries use a spatial hash rebuilt every step. All
+// vectors are preallocated.
 import { V3, Rng, clamp, lerp, TAU } from './math.js';
 import { SPECIES } from './species.js';
 import { FISH_BOUNDS, ISO } from './reef.js';
@@ -13,6 +16,7 @@ const STATE_SPEED = {
   CRUISING: 1.0, EXPLORING: 1.2, HOVERING: 0.12, TURNING: 0.55, AVOIDING: 0.85, SCHOOLING: 1.0, SEEKING_SHELTER: 0.9, RESTING: 0.22,
 };
 const UP = new V3(0, 1, 0);
+const OPEN_STEPS = [1.6, 1.0, 0.5];
 
 export class FishEntity {
   constructor(id, key, rng) {
@@ -61,6 +65,7 @@ export class FishEntity {
     this.envLight = 1;
     this.stuck = 0;
     this.bestDist = 1e9;
+    this.anchor = new V3();
     this.radius = this.bodyLength * 0.2;
     this.clearance = this.bodyLength * (def.id === 7 ? 0.32 : 0.18) + 0.03;
     this.gape = 0;
@@ -90,6 +95,7 @@ export class Aquarium {
     // scratch vectors
     this.t = Array.from({ length: 12 }, () => new V3());
     this.g = { x: 0, y: 0, z: 0 };
+    this.dir = { x: 0, y: 0, z: 0 };
   }
 
   spawn(distribution) {
@@ -147,6 +153,7 @@ export class Aquarium {
     if (f.species === 'morayEel') {
       f.position.set(...this.reef.moray.mouth);
       f.heading.set(...this.reef.moray.dirOut);
+      f.anchor.copy(f.position);
       return;
     }
     const p = this.t[0];
@@ -158,7 +165,7 @@ export class Aquarium {
         const lead = school.members[0].position;
         p.set(lead.x + (this.rng.next() - 0.5) * 1.6, lead.y + (this.rng.next() - 0.5) * 0.8, lead.z + (this.rng.next() - 0.5) * 1.2);
       } else {
-        this.randomPointInZone(f, p, 0, 99, 0.9);
+        this.randomPointInZone(f, p, 0, 99, 0.9, false);
       }
       if (!this.isFree(p, f.clearance + 0.1)) continue;
       if (this.fish.some((o) => o.position.distTo(p) < (o.radius + f.radius) * 2.2)) continue;
@@ -166,6 +173,7 @@ export class Aquarium {
     }
     f.position.copy(p);
     f.targetPosition.copy(p);
+    f.anchor.copy(p);
     void k;
   }
 
@@ -183,13 +191,13 @@ export class Aquarium {
   }
 
   // Random free point in the species' preferred band, at a distance between dMin and dMax
-  // from the fish, usually somewhere on screen.
-  randomPointInZone(f, out, dMin, dMax, visibleBias = 0.8) {
+  // from the fish, usually somewhere on screen. `sight` rejects points hidden behind rock.
+  randomPointInZone(f, out, dMin, dMax, visibleBias = 0.8, sight = true) {
     const b = f.def.behavior, B = FISH_BOUNDS, rng = this.rng;
     const wantVisible = rng.next() < visibleBias;
     // most new goals lie roughly ahead; fish rarely reverse course for no reason
     const ahead = rng.next() < 0.75;
-    for (let tries = 0; tries < 60; tries++) {
+    for (let tries = 0; tries < 80; tries++) {
       out.set(lerp(B.xMin + 0.5, B.xMax - 0.5, rng.next()),
         lerp(b.zone[0], b.zone[1], Math.pow(rng.next(), 0.9)),
         lerp(B.zMin + 0.3, B.zMax - 0.15, rng.next()));
@@ -201,9 +209,122 @@ export class Aquarium {
         ((out.x - f.position.x) * f.heading.x + (out.y - f.position.y) * f.heading.y + (out.z - f.position.z) * f.heading.z) / d < -0.1) continue;
       if (wantVisible && tries < 40 && !this.visible(out.x, out.y, out.z, 0.82)) continue;
       if (!this.isFree(out, f.clearance + 0.15)) continue;
+      if (sight && !this.clearLine(f, f.position, out)) continue;
       return out;
     }
-    return out.copy(f.position);
+    // Spawn runs before the fish has a real position, so it keeps the old fallback.
+    return sight ? this.openGoal(f, out) : out.copy(f.position);
+  }
+
+  // Straight path stays in open water. Endpoints are skipped: the fish may be sliding
+  // on rock, and the goal itself is checked by the caller.
+  clearLine(f, from, to) {
+    const dx = to.x - from.x, dy = to.y - from.y, dz = to.z - from.z;
+    const len = Math.hypot(dx, dy, dz);
+    if (len < 0.25) return true;
+    const o = this.reef.obstacle, B = FISH_BOUNDS;
+    const n = Math.ceil(len / 0.15);
+    const limit = ISO * 0.72;
+    const clearance = f.clearance;
+    const anemones = f.def.behavior.territory === 'anemone' ? null : this.reef.corals.anemones;
+    for (let i = 1; i < n; i++) {
+      const t = i / n;
+      const x = from.x + dx * t, y = from.y + dy * t, z = from.z + dz * t;
+      if (x < B.xMin || x > B.xMax || z < B.zMin || z > B.zMax || y > B.yMax) return false;
+      if (y < this.reef.sandHeight(x, z) + clearance) return false;
+      if (o.sample(x, y, z) > limit) return false;
+      if (!anemones) continue;
+      for (let a = 0; a < anemones.length; a++) {
+        const an = anemones[a];
+        const R = an.radius + clearance;
+        const qx = x - an.pos[0], qy = y - an.pos[1], qz = z - an.pos[2];
+        if (qx * qx + qy * qy + qz * qz < R * R) return false;
+      }
+    }
+    return true;
+  }
+
+  // Touching rock, coral, sand, or (for anyone but the resident clownfish) an anemone.
+  againstRock(f) {
+    const o = this.reef.obstacle, p = f.position, h = f.heading;
+    const limit = ISO * 0.8;
+    const ax = -h.z, az = h.x;
+    const side = Math.max(0.25, f.clearance + 0.15);
+    const reach = 0.5 + f.bodyLength * 0.8;
+    if (o.sample(p.x, p.y, p.z) > limit) return true;
+    if (o.sample(p.x + h.x * 0.4, p.y + h.y * 0.4, p.z + h.z * 0.4) > limit) return true;
+    if (o.sample(p.x + h.x * reach, p.y + h.y * reach * 0.3, p.z + h.z * reach) > limit) return true;
+    if (o.sample(p.x + ax * side, p.y, p.z + az * side) > limit) return true;
+    if (o.sample(p.x - ax * side, p.y, p.z - az * side) > limit) return true;
+    if (p.y < this.reef.sandHeight(p.x, p.z) + f.clearance + 0.12) return true;
+    if (f.def.behavior.territory !== 'anemone') {
+      for (const a of this.reef.corals.anemones) {
+        const R = a.radius + 0.2 + f.clearance;
+        if (Math.hypot(p.x - a.pos[0], p.y - a.pos[1], p.z - a.pos[2]) < R) return true;
+      }
+    }
+    return false;
+  }
+
+  // Least-solid direction around the fish. The fan is rotated so a second try differs.
+  openDir(f) {
+    const o = this.reef.obstacle, p = f.position, B = FISH_BOUNDS, dir = this.dir;
+    let best = Infinity;
+    const base = this.rng.next() * TAU;
+    for (let i = 0; i < 10; i++) {
+      const a = base + (i / 10) * TAU;
+      const dx = Math.cos(a), dz = Math.sin(a);
+      let score = 0;
+      for (let s = 1; s <= 3; s++) {
+        const x = p.x + dx * s * 0.55, z = p.z + dz * s * 0.55, y = p.y;
+        if (x < B.xMin + 0.4 || x > B.xMax - 0.4 || z < B.zMin + 0.3 || z > B.zMax - 0.2) { score += 2; continue; }
+        if (y < this.reef.sandHeight(x, z) + f.clearance + 0.15) score += 1.2;
+        score += o.sample(x, y, z) + o.sample(x, y + 0.35, z);
+      }
+      if (score < best) { best = score; dir.x = dx; dir.y = 0; dir.z = dz; }
+    }
+    let up = 0;
+    for (let s = 1; s <= 3; s++) {
+      const y = p.y + s * 0.45;
+      if (y > B.yMax - 0.3) { up += 2; break; }
+      up += o.sample(p.x, y, p.z);
+    }
+    if (up + 0.15 < best) dir.y = 0.65;
+    const len = Math.hypot(dir.x, dir.y, dir.z) || 1;
+    dir.x /= len; dir.y /= len; dir.z /= len;
+    return dir;
+  }
+
+  // A short goal along the open direction, used when nothing reachable is in sight.
+  openGoal(f, out) {
+    const dir = this.openDir(f);
+    for (let i = 0; i < OPEN_STEPS.length; i++) {
+      const dist = OPEN_STEPS[i];
+      out.set(f.position.x + dir.x * dist, f.position.y + dir.y * dist, f.position.z + dir.z * dist);
+      this.clearPoint(f, out);
+      if (this.isFree(out, f.clearance * 0.6) && this.clearLine(f, f.position, out)) return out;
+    }
+    return out.set(f.position.x + dir.x * 0.45, f.position.y + dir.y * 0.45, f.position.z + dir.z * 0.45);
+  }
+
+  // Leave a stall: face open water, drop a turn aimed into the reef, and pick again.
+  unstick(f) {
+    const dir = this.openDir(f);
+    f.heading.set(dir.x, dir.y, dir.z).normalize();
+    if (f.behaviorState === 'TURNING' || f.behaviorState === 'AVOIDING' || f.behaviorState === 'HOVERING' || f.behaviorState === 'RESTING') {
+      const back = f.prevState;
+      const leave = f.behaviorState === 'HOVERING' || f.behaviorState === 'RESTING' || back === 'TURNING' || back === 'AVOIDING';
+      this.setState(f, leave ? 'CRUISING' : back);
+      f.stateUntil = this.time + 3 + this.rng.next() * 3;
+    } else {
+      f.stuck = 0;
+      f.bestDist = 1e9;
+    }
+    this.chooseTarget(f);
+    const kick = f.preferredSpeed * 0.45 * this.cfg.fish.speedMultiplier;
+    if (f.speed < kick) f.speed = kick;
+    f.velocity.copy(f.heading).scale(f.speed);
+    f.anchor.copy(f.position);
   }
 
   // Move a goal out of the avoidance margin around rock, so seeking it and steering
@@ -229,6 +350,7 @@ export class Aquarium {
       if (!this.visible(out.x, out.y, out.z, 0.9) && tries < 20) continue;
       this.clearPoint(f, out);
       if (!this.isFree(out, f.clearance * 0.7)) continue;
+      if (!this.clearLine(f, f.position, out)) continue;
       return out;
     }
     return this.randomPointInZone(f, out, 0, maxD);
@@ -279,27 +401,36 @@ export class Aquarium {
       case 'HOVERING':
         out.copy(f.position).addScaled(f.heading, 0.15);
         if (f.homeTerritory && f.position.distTo(f.homeTerritory) > (b.territoryRadius || 1) * 1.5) this.nearHome(f, out, 0.6);
+        else if (!this.isFree(out, f.clearance * 0.5)) this.openGoal(f, out);
         break;
       case 'RESTING': {
         if (f.homeTerritory) { this.nearHome(f, out, 0.4); break; }
         const inst = reef.corals.instances;
+        let found = false;
         for (let tries = 0; tries < 30; tries++) {
           const c = inst[this.rng.int(inst.length)];
           if (c.name === 'stone' || c.name === 'shell' || c.name === 'anemone') continue;
           const H = reef.corals.variants[c.name][c.variant].height * c.scale;
           out.set(c.pos[0] + c.b.u[0] * (H + 0.25), c.pos[1] + c.b.u[1] * (H + 0.25) + 0.1, c.pos[2] + c.b.u[2] * (H + 0.25) + 0.15);
-          if (out.distTo(f.position) < 5 && this.isFree(out, f.clearance) && (tries > 20 || this.visible(out.x, out.y, out.z, 0.9))) break;
+          if (out.distTo(f.position) < 5 && this.isFree(out, f.clearance) && this.clearLine(f, f.position, out) && (tries > 20 || this.visible(out.x, out.y, out.z, 0.9))) {
+            found = true;
+            break;
+          }
         }
+        if (!found) this.openGoal(f, out);
         break;
       }
       case 'SEEKING_SHELTER':
-        if (b.territory === 'anemone' && f.homeTerritory) { out.copy(f.homeTerritory); out.y += 0.02; }
-        else if (b.territory === 'ledge') this.pickNear(reef.ledges, f, out, 1.5);
+        if (b.territory === 'anemone' && f.homeTerritory) {
+          out.copy(f.homeTerritory); out.y += 0.02;
+          if (!this.clearLine(f, f.position, out)) this.nearHome(f, out, 0.8);
+        } else if (b.territory === 'ledge') this.pickNear(reef.ledges, f, out, 1.5);
         else this.pickNear(reef.shelter, f, out, 4);
         break;
       case 'SCHOOLING': {
         const s = this.schools.get(f.schoolId);
         if (s) out.copy(s.target); else this.randomPointInZone(f, out, 2, 6);
+        if (!this.clearLine(f, f.position, out)) this.randomPointInZone(f, out, 1.2, 4, 0.4);
         break;
       }
       default:
@@ -313,9 +444,10 @@ export class Aquarium {
     for (let tries = 0; tries < 30; tries++) {
       out.set(h.x + (this.rng.next() - 0.5) * 2 * r, h.y + (this.rng.next() - 0.35) * r, h.z + (this.rng.next() - 0.5) * 2 * r * 0.7);
       if (f.def.behavior.territory !== 'anemone') this.clearPoint(f, out);
-      if (this.isFree(out, f.clearance * 0.8)) return out;
+      if (this.isFree(out, f.clearance * 0.8) && this.clearLine(f, f.position, out)) return out;
     }
-    return out.copy(h);
+    if (this.isFree(h, f.clearance * 0.5) && this.clearLine(f, f.position, h)) return out.copy(h);
+    return this.openGoal(f, out);
   }
 
   // ---- spatial hash ---------------------------------------------------------------------------
@@ -373,7 +505,10 @@ export class Aquarium {
       if (n) s.center.scale(1 / n);
       if (time > s.until || (n && s.center.distTo(s.target) < 1.0)) {
         this.pickSchoolTarget(s);
-        for (const m of s.members) if (m.behaviorState === 'SCHOOLING') m.targetPosition.copy(s.target);
+        for (const m of s.members) if (m.behaviorState === 'SCHOOLING') {
+          m.targetPosition.copy(s.target);
+          if (!this.clearLine(m, m.position, m.targetPosition)) this.randomPointInZone(m, m.targetPosition, 1.2, 4, 0.4);
+        }
       }
     }
     for (const f of this.fish) {
@@ -393,13 +528,23 @@ export class Aquarium {
     // state transitions
     if (this.time >= f.stateUntil && f.behaviorState !== 'TURNING' && f.behaviorState !== 'AVOIDING') this.chooseState(f);
     const toT = tmp.subOf(f.targetPosition, f.position);
-    const dist = toT.len();
-    if (dist < f.bestDist - 0.05) { f.bestDist = dist; f.stuck = 0; } else f.stuck += dt;
+    let dist = toT.len();
     const arrive = Math.max(0.25, f.bodyLength * 0.8);
-    if (dist < arrive || f.stuck > 6) {
-      if (f.behaviorState === 'CRUISING' || f.behaviorState === 'EXPLORING' || f.stuck > 6) {
-        if (f.stuck > 6 && this.rng.next() < 0.5) this.chooseState(f);
-        else { this.chooseTarget(f); f.bestDist = 1e9; f.stuck = 0; }
+    // The speed value stays high when a corner cancels the motion, so the stall is
+    // measured from where the fish actually is. Hovering, resting and schooling may
+    // hold still; everyone else, and anyone slid along rock, may not.
+    const moved = f.position.distTo(f.anchor);
+    const settled = f.behaviorState === 'HOVERING' || f.behaviorState === 'RESTING' || f.behaviorState === 'SCHOOLING';
+    const pinned = this.againstRock(f);
+    if (dist < f.bestDist - 0.05) { f.bestDist = dist; f.stuck = 0; f.anchor.copy(f.position); }
+    else if (moved > 0.08 && !pinned) { f.stuck = 0; f.anchor.copy(f.position); }
+    else if (dist >= arrive && (!settled || pinned)) f.stuck += dt;
+    else f.stuck = Math.max(0, f.stuck - dt);
+    if (f.stuck > 1.5) {
+      this.unstick(f);
+    } else if (dist < arrive) {
+      if (f.behaviorState === 'CRUISING' || f.behaviorState === 'EXPLORING') {
+        this.chooseTarget(f); f.bestDist = 1e9; f.stuck = 0;
       } else if (f.behaviorState === 'SEEKING_SHELTER' && this.rng.next() < dt * 0.5) {
         this.setState(f, f.def.behavior.territory === 'anemone' ? 'RESTING' : 'HOVERING');
         f.stateUntil = this.time + 3 + this.rng.next() * 5;
@@ -407,6 +552,7 @@ export class Aquarium {
       }
     }
     toT.subOf(f.targetPosition, f.position);
+    dist = toT.len();
     const dirDot = dist > 1e-4 ? toT.dot(f.heading) / dist : 1;
     if (f.behaviorState !== 'TURNING' && f.behaviorState !== 'HOVERING' && f.behaviorState !== 'RESTING' && dirDot < -0.35 && dist > 1.0) {
       this.setState(f, 'TURNING');
@@ -509,7 +655,9 @@ export class Aquarium {
       const r = (b.territoryRadius || 1) * f.territoryScale;
       terr.subOf(f.homeTerritory, f.position);
       const d = terr.len();
-      terr.scale(d > r ? ((d - r) / d) * 0.8 : 0);
+      // A home behind rock would drag the fish into the stall we just tried to avoid.
+      if (d > r && this.clearLine(f, f.position, f.homeTerritory)) terr.scale(((d - r) / d) * 0.8);
+      else terr.set(0, 0, 0);
     }
     // reef-loving fish drift down toward the reef when well above their band
     if (b.reefAffinity > 0.5 && f.position.y > b.zone[1]) terr.y -= (f.position.y - b.zone[1]) * 0.3;

@@ -83,6 +83,12 @@ export const DEFAULT_CONFIG = {
     bubblePlink: 0.35,       // how often a pop has a glassy ring
   },
 
+  // Looping soundtrack in media/track001.mp3. Off until turned on. Volume is a percent.
+  music: {
+    enabled: false,
+    volume: 100,
+  },
+
   // Overlay widgets, matching fayling-web-ocean-pictureframe. The weather location is a
   // city ("Lisbon, Portugal") or a 5-digit US ZIP code.
   clock: {

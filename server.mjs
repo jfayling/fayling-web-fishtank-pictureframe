@@ -16,6 +16,7 @@ const types = {
   '.mjs': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
   '.png': 'image/png',
+  '.mp3': 'audio/mpeg',
   '.json': 'application/json',
   '.glb': 'model/gltf-binary',
   '.gltf': 'model/gltf+json',

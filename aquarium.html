@@ -18,7 +18,7 @@
   #toolbar button:hover, #toolbar button:focus-visible { opacity: 1; background: #18222ce6; }
   #toolbar button:focus-visible { outline: 2px solid #e2a04e; outline-offset: 2px; }
   #sound::before { content: '♪'; display: inline-block; width: 16px; opacity: .7; }
-  #sound.on, #settings.on { border-color: #e2a04eaa; opacity: 1; }
+  #sound.on, #music.on, #settings.on { border-color: #e2a04eaa; opacity: 1; }
   #sound.on::before { opacity: 1; }
   #scene-label { position: fixed; left: 50%; bottom: 28px; z-index: 2; transform: translateX(-50%);
                  padding: 7px 14px; border: 1px solid #e5e1d822; border-radius: 8px; background: #0b0f1488;
@@ -177,38 +177,75 @@
     to { transform: translateY(-50%); }
   }
   .weather-error { padding: 11px 14px; font-size: 12px; opacity: .72; }
-  #err { display: none; position: fixed; inset: 0; z-index: 5; align-items: center; justify-content: center; padding: 2em; color: #9ab; font: 18px/1.5 system-ui, sans-serif; text-align: center; background: #021018; white-space: pre-wrap; }
+  #err { display: none; position: fixed; inset: 0; z-index: 40; align-items: center; justify-content: center; padding: 2em; color: #9ab; font: 18px/1.5 system-ui, sans-serif; text-align: center; background: #021018; white-space: pre-wrap; }
+  #loading { position: fixed; inset: 0; z-index: 30; display: grid; place-items: center; background: #000; color: #f7f4ee;
+             font-family: system-ui, sans-serif; transition: opacity 1.8s ease; }
+  #loading::before { content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 38vh; pointer-events: none;
+                     background: radial-gradient(ellipse 70% 100% at 50% 100%, #0e3a48 0%, #06141c 46%, transparent 72%); }
+  #loading.done { opacity: 0; pointer-events: none; }
+  #loading.done .loading-track::after { animation: none; }
+  #loading[hidden] { display: none; }
+  .loading-copy { position: relative; text-align: center; }
+  .loading-kicker { margin: 0 0 18px; padding-left: .32em; font: 300 12px/1 system-ui, sans-serif;
+                    letter-spacing: .32em; text-transform: uppercase; opacity: .55; }
+  #loading h1 { margin: 0; padding-left: .22em; font: 300 clamp(34px, 5vw, 56px)/1 system-ui, sans-serif;
+                letter-spacing: .22em; text-transform: uppercase; }
+  #loading-status { margin: 28px 0 0; min-height: 1.4em; font: 14px/1.4 system-ui, sans-serif; letter-spacing: .04em; opacity: .78; }
+  .loading-track { position: relative; width: min(240px, 64vw); height: 2px; margin: 20px auto 0; overflow: hidden; background: #f7f4ee1f; }
+  #loading-bar { display: block; height: 100%; background: #e2a04e; transform: scaleX(.04); transform-origin: left center;
+                 transition: transform .6s ease; }
+  .loading-track::after { content: ''; position: absolute; inset: 0;
+                          background: linear-gradient(90deg, transparent, #fff8, transparent);
+                          transform: translateX(-100%); animation: loading-sheen 1.6s ease-in-out infinite; }
+  @keyframes loading-sheen { from { transform: translateX(-100%); } to { transform: translateX(100%); } }
+  @media (prefers-reduced-motion: reduce) {
+    #loading, #loading-bar { transition: none; }
+    .loading-track::after { display: none; }
+  }
 </style>
 </head>
 <body>
-<canvas id="c"></canvas>
-<div id="hud"></div>
-<div id="toolbar">
+<div id="loading" aria-busy="true">
+  <div class="loading-copy">
+    <p class="loading-kicker">Picture frame</p>
+    <h1>Aquarium</h1>
+    <p id="loading-status" aria-live="polite">Preparing the picture</p>
+    <div class="loading-track" aria-hidden="true"><span id="loading-bar"></span></div>
+  </div>
+</div>
+<canvas id="c" inert></canvas>
+<div id="hud" inert></div>
+<div id="toolbar" inert>
   <button id="scene" type="button" title="Next scene (])">Day reef</button>
   <button id="sound" type="button" aria-pressed="false" title="Toggle aquarium audio (M)">Sound off</button>
+  <button id="music" type="button" aria-pressed="false" title="Turn background music on or off (N)">Music off</button>
   <button id="settings" type="button" aria-expanded="false" title="Show settings (F1)">Settings</button>
 </div>
-<div id="scene-label" aria-live="polite" aria-hidden="true"></div>
-<div id="panel" class="hidden">
+<div id="scene-label" aria-live="polite" aria-hidden="true" inert></div>
+<div id="panel" class="hidden" inert>
   <div class="panel-bar">
     <span>Settings</span>
     <button id="close-settings" type="button" aria-label="Close settings" title="Close settings (Esc)">×</button>
   </div>
   <div id="panel-body"></div>
 </div>
-<time id="clock-widget" aria-label="Current time">
+<time id="clock-widget" aria-label="Current time" inert>
   <span class="clock-time"></span>
   <span class="clock-date"></span>
 </time>
-<aside id="weather-widget" data-position="bottom-left" aria-label="Current weather" aria-live="polite" hidden></aside>
+<aside id="weather-widget" data-position="bottom-left" aria-label="Current weather" aria-live="polite" hidden inert></aside>
 <div id="err"></div>
 <script type="module">
 // ---- js/wgsl/common.js ----
 // Shared WGSL: the per-frame uniform block, noise, caustics, shadows, water absorption and
 // fog, and the underwater lighting model. Shadow-pass shaders get only the uniform block.
 
-const FRAME_FLOATS = 108;
-const SHADOW_SIZE = 2048;
+const FRAME_FLOATS = 116;
+// Half the old map. The comparison kernel is sized so the penumbra stays the same
+// width on the sand; hardware filtering hides the coarser texels.
+const SHADOW_SIZE = 1024;
+// Projected caustic field, sampled by every shaded pixel instead of recomputed there.
+const CAUSTIC_SIZE = 1024;
 
 const FRAME = /* wgsl */ `
 diagnostic(off, derivative_uniformity);
@@ -226,6 +263,8 @@ struct Frame {
   drift: vec4f,      // xyz accumulated current displacement (wrapped), w unused
   src: array<vec4f, 6>, // bubble sources: xyz, w = enabled
   sun: vec4f,        // rgb linear sun colour; intensity is lightDir.w
+  aux: vec4f,        // xy = scene pixels per light-shaft pixel
+  sRange: vec4f,     // xy min, zw max of the caustic projection domain
 };
 @group(0) @binding(0) var<uniform> F: Frame;
 `;
@@ -286,7 +325,7 @@ fn ign(p: vec2f) -> f32 { return fract(52.9829189 * fract(dot(p, vec2f(0.0671105
 fn srgb(c: vec3f) -> vec3f { return pow(c, vec3f(2.2)); }
 `;
 
-const CAUSTICS = /* wgsl */ `
+const CAUSTIC_FN = /* wgsl */ `
 // Animated Voronoi edge network: bright filaments where neighbouring cells meet, the way
 // light focused by surface waves draws on the reef.
 fn causticEdge(p: vec2f, t: f32) -> f32 {
@@ -304,19 +343,43 @@ fn causticEdge(p: vec2f, t: f32) -> f32 {
   }
   return sqrt(d2) - sqrt(d1);
 }
+fn causticEdges(s: vec2f, t: f32) -> vec2f {
+  let warp = vec2f(vnoise2(s * 0.31 + vec2f(t * 0.045, 0.0)), vnoise2(s * 0.31 + vec2f(17.0, -t * 0.04))) - 0.5;
+  let uv = s * 1.15 + warp * 1.6;
+  return vec2f(causticEdge(uv, t * 0.8), causticEdge(uv * 1.71 + vec2f(3.1, 7.7), t * 1.05));
+}
+`;
+
+// One projected field per frame. Shading only looks it up and applies the depth blur,
+// which depends on the point being lit and so stays in the material shader.
+const CAUSTICS = /* wgsl */ `
+@group(0) @binding(3) var causticMap: texture_2d<f32>;
+@group(0) @binding(4) var causticSamp: sampler;
 fn causticsAt(P: vec3f) -> f32 {
   let depth = max(F.params.z - P.y, 0.0);
   let L = F.lightDir.xyz;
   let s = P.xz + L.xz / max(L.y, 0.25) * depth;
-  let t = F.camPos.w;
-  let warp = vec2f(vnoise2(s * 0.31 + vec2f(t * 0.045, 0.0)), vnoise2(s * 0.31 + vec2f(17.0, -t * 0.04))) - 0.5;
-  let uv = s * 1.15 + warp * 1.6;
+  let uv = (s - F.sRange.xy) / max(F.sRange.zw - F.sRange.xy, vec2f(1e-4));
+  let e = textureSampleLevel(causticMap, causticSamp, uv, 0.0).rg;
   let blur = mix(0.12, 0.3, saturate(depth / 8.0));
-  let e1 = causticEdge(uv, t * 0.8);
-  let e2 = causticEdge(uv * 1.71 + vec2f(3.1, 7.7), t * 1.05);
-  let c1 = 1.0 - smoothstep(0.0, blur, e1);
-  let c2 = 1.0 - smoothstep(0.0, blur * 1.4, e2);
+  let c1 = 1.0 - smoothstep(0.0, blur, e.r);
+  let c2 = 1.0 - smoothstep(0.0, blur * 1.4, e.g);
   return c1 * 0.7 + c2 * 0.45;
+}
+`;
+
+const CAUSTIC_FS_TRI = /* wgsl */ `
+struct COut { @builtin(position) pos: vec4f };
+@vertex fn vs(@builtin(vertex_index) i: u32) -> COut {
+  let p = vec2f(f32((i << 1u) & 2u), f32(i & 2u)) * 2.0 - 1.0;
+  var o: COut;
+  o.pos = vec4f(p, 0.0, 1.0);
+  return o;
+}
+@fragment fn fs(in: COut) -> @location(0) vec4f {
+  let uv = in.pos.xy / vec2f(${CAUSTIC_SIZE}.0);
+  let s = mix(F.sRange.xy, F.sRange.zw, uv);
+  return vec4f(causticEdges(s, F.camPos.w), 0.0, 1.0);
 }
 `;
 
@@ -324,10 +387,9 @@ const LIGHTING = /* wgsl */ `
 @group(0) @binding(1) var shadowMap: texture_depth_2d;
 @group(0) @binding(2) var shadowSamp: sampler_comparison;
 
-const POISSON = array<vec2f, 12>(
-  vec2f(-0.326, -0.406), vec2f(-0.840, -0.074), vec2f(-0.696, 0.457), vec2f(-0.203, 0.621),
-  vec2f(0.962, -0.195), vec2f(0.473, -0.480), vec2f(0.519, 0.767), vec2f(0.185, -0.893),
-  vec2f(0.507, 0.064), vec2f(0.896, 0.412), vec2f(-0.322, -0.933), vec2f(-0.792, -0.598));
+const POISSON = array<vec2f, 8>(
+  vec2f(-0.840, -0.074), vec2f(-0.696, 0.457), vec2f(-0.203, 0.621), vec2f(0.519, 0.767),
+  vec2f(0.962, -0.195), vec2f(0.185, -0.893), vec2f(-0.322, -0.933), vec2f(0.507, 0.064));
 
 fn shadowAt(P: vec3f, N: vec3f, px: vec2f) -> f32 {
   let q = F.lightViewProj * vec4f(P + N * 0.05, 1.0);
@@ -336,12 +398,13 @@ fn shadowAt(P: vec3f, N: vec3f, px: vec2f) -> f32 {
   let inside = all(uv > vec2f(0.0)) && all(uv < vec2f(1.0)) && q.z < 1.0;
   let a = ign(px) * 6.2831;
   let rot = mat2x2f(cos(a), sin(a), -sin(a), cos(a));
-  let r = 2.2 / ${SHADOW_SIZE}.0;
+  // 1.1/1024 matches the old 2.2/2048 world-space radius.
+  let r = 1.1 / ${SHADOW_SIZE}.0;
   var s = 0.0;
-  for (var i = 0; i < 12; i++) {
+  for (var i = 0; i < 8; i++) {
     s += textureSampleCompareLevel(shadowMap, shadowSamp, uv + rot * POISSON[i] * r, z);
   }
-  return select(1.0, s / 12.0, inside);
+  return select(1.0, s / 8.0, inside);
 }
 
 fn sunColor() -> vec3f { return F.sun.rgb * F.lightDir.w; }
@@ -425,6 +488,9 @@ fn shade(P: vec3f, N: vec3f, s: Surface, px: vec2f) -> vec3f {
 function common({ shadow = false } = {}) {
   return FRAME + NOISE + (shadow ? '' : CAUSTICS + LIGHTING);
 }
+
+// Full-screen pass that fills the caustic map. Same edge function the materials used to run per pixel.
+const CAUSTIC_BAKE = FRAME + NOISE + CAUSTIC_FN + CAUSTIC_FS_TRI;
 
 // ---- js/wgsl/fish.js ----
 // Fish: procedural swimming deformation and per-species colour patterns.
@@ -1043,12 +1109,18 @@ fn rockHeight(p: vec3f) -> f32 {
 @fragment fn fs(in: VOut) -> @location(0) vec4f {
   let P = in.world;
   var N = normalize(in.nrm);
-  // porous live-rock relief
-  let e = 0.01;
+  // Porous relief. One noise evaluation; the pixel footprint supplies the slope, which
+  // matches a finite difference of about a pixel and skips the three extra probes.
   let h0 = rockHeight(P);
-  let g = vec3f(rockHeight(P + vec3f(e, 0.0, 0.0)) - h0, rockHeight(P + vec3f(0.0, e, 0.0)) - h0, rockHeight(P + vec3f(0.0, 0.0, e)) - h0) / e;
+  let dPx = dpdx(P);
+  let dPy = dpdy(P);
+  let span = max(length(dPx), length(dPy));
   let detailFade = 1.0 - saturate((waterDistance(P) - 3.0) / 12.0);
-  N = normalize(N - (g - N * dot(g, N)) * 0.06 * (0.4 + 0.6 * detailFade));
+  let tlen2 = max(dot(dPx, dPx), 1e-8);
+  let blen2 = max(dot(dPy, dPy), 1e-8);
+  let g = dPx * (dpdx(h0) / tlen2) + dPy * (dpdy(h0) / blen2);
+  let bump = select(0.0, 0.06 * (0.4 + 0.6 * detailFade), span < 0.2);
+  N = normalize(N - (g - N * dot(g, N)) * bump);
 
   let n1 = fbm3(P * 0.9);
   var col = mix(srgb(vec3f(0.40, 0.35, 0.28)), srgb(vec3f(0.58, 0.52, 0.42)), n1);
@@ -1494,7 +1566,9 @@ fn shaft(q: vec3f, t: f32) -> f32 {
   return smoothstep(0.42, 0.85, n);
 }
 @fragment fn fs(in: VOut) -> @location(0) vec4f {
-  let pix = vec2i(in.pos.xy);
+  // The shaft target is half the scene size. aux.xy scales those pixels back to the depth buffer.
+  let dims = vec2i(textureDimensions(sceneDepth));
+  let pix = clamp(vec2i(vec2f(in.pos.xy) * F.aux.xy), vec2i(0), dims - vec2i(1));
   let depth = textureLoad(sceneDepth, pix, 0);
   let w = F.invViewProj * vec4f(in.ndc, depth, 1.0);
   let world = w.xyz / w.w;
@@ -1532,6 +1606,23 @@ fn shaft(q: vec3f, t: f32) -> f32 {
   let tint = mix(scatter, vec3f(1.0), saturate(distance(F.sun.rgb, vec3f(1.0, 0.97, 0.9)) * 2.2));
   let col = acc * phase * sunColor() * tint * F.params.y * 0.035;
   return vec4f(col, 0.0);
+}
+`;
+
+// Bilinear expand of the half-resolution shafts onto the HDR image.
+const RAYS_UP = /* wgsl */ `
+struct VO { @builtin(position) pos: vec4f, @location(0) uv: vec2f };
+@vertex fn vs(@builtin(vertex_index) i: u32) -> VO {
+  let p = vec2f(f32((i << 1u) & 2u), f32(i & 2u));
+  var o: VO;
+  o.pos = vec4f(p * 2.0 - 1.0, 0.0, 1.0);
+  o.uv = vec2f(p.x, 1.0 - p.y);
+  return o;
+}
+@group(0) @binding(0) var src: texture_2d<f32>;
+@group(0) @binding(1) var samp: sampler;
+@fragment fn fs(in: VO) -> @location(0) vec4f {
+  return vec4f(textureSampleLevel(src, samp, in.uv, 0.0).rgb, 0.0);
 }
 `;
 
@@ -1944,6 +2035,12 @@ const DEFAULT_CONFIG = {
     bubbleRate: 1,           // 0 = silent, 1 = a steady stream, higher = denser
     bubblePitch: 0.5,        // 0 = larger, lower pops; 1 = tiny high ticks
     bubblePlink: 0.35,       // how often a pop has a glassy ring
+  },
+
+  // Looping soundtrack in media/track001.mp3. Off until turned on. Volume is a percent.
+  music: {
+    enabled: false,
+    volume: 100,
   },
 
   // Overlay widgets, matching fayling-web-ocean-pictureframe. The weather location is a
@@ -3911,7 +4008,10 @@ function placeCorals(rng, rock, field, obstacle, sandHeight, style) {
 //            + currentInfluence + wandering (+ alignment + cohesion for schools)
 // Heading turns toward the steering intent at a limited angular rate, so a fish never
 // flips direction in a frame; it slows, banks and bends through the turn instead.
-// Neighbour queries use a spatial hash rebuilt every step. All vectors are preallocated.
+// A goal is kept only when open water lies straight to it, so a fish is not sent
+// through rock or coral. One that stalls against the reef turns toward open water
+// and picks again. Neighbour queries use a spatial hash rebuilt every step. All
+// vectors are preallocated.
 
 
 
@@ -3919,6 +4019,7 @@ const STATE_SPEED = {
   CRUISING: 1.0, EXPLORING: 1.2, HOVERING: 0.12, TURNING: 0.55, AVOIDING: 0.85, SCHOOLING: 1.0, SEEKING_SHELTER: 0.9, RESTING: 0.22,
 };
 const UP = new V3(0, 1, 0);
+const OPEN_STEPS = [1.6, 1.0, 0.5];
 
 class FishEntity {
   constructor(id, key, rng) {
@@ -3967,6 +4068,7 @@ class FishEntity {
     this.envLight = 1;
     this.stuck = 0;
     this.bestDist = 1e9;
+    this.anchor = new V3();
     this.radius = this.bodyLength * 0.2;
     this.clearance = this.bodyLength * (def.id === 7 ? 0.32 : 0.18) + 0.03;
     this.gape = 0;
@@ -3996,6 +4098,7 @@ class Aquarium {
     // scratch vectors
     this.t = Array.from({ length: 12 }, () => new V3());
     this.g = { x: 0, y: 0, z: 0 };
+    this.dir = { x: 0, y: 0, z: 0 };
   }
 
   spawn(distribution) {
@@ -4053,6 +4156,7 @@ class Aquarium {
     if (f.species === 'morayEel') {
       f.position.set(...this.reef.moray.mouth);
       f.heading.set(...this.reef.moray.dirOut);
+      f.anchor.copy(f.position);
       return;
     }
     const p = this.t[0];
@@ -4064,7 +4168,7 @@ class Aquarium {
         const lead = school.members[0].position;
         p.set(lead.x + (this.rng.next() - 0.5) * 1.6, lead.y + (this.rng.next() - 0.5) * 0.8, lead.z + (this.rng.next() - 0.5) * 1.2);
       } else {
-        this.randomPointInZone(f, p, 0, 99, 0.9);
+        this.randomPointInZone(f, p, 0, 99, 0.9, false);
       }
       if (!this.isFree(p, f.clearance + 0.1)) continue;
       if (this.fish.some((o) => o.position.distTo(p) < (o.radius + f.radius) * 2.2)) continue;
@@ -4072,6 +4176,7 @@ class Aquarium {
     }
     f.position.copy(p);
     f.targetPosition.copy(p);
+    f.anchor.copy(p);
     void k;
   }
 
@@ -4089,13 +4194,13 @@ class Aquarium {
   }
 
   // Random free point in the species' preferred band, at a distance between dMin and dMax
-  // from the fish, usually somewhere on screen.
-  randomPointInZone(f, out, dMin, dMax, visibleBias = 0.8) {
+  // from the fish, usually somewhere on screen. `sight` rejects points hidden behind rock.
+  randomPointInZone(f, out, dMin, dMax, visibleBias = 0.8, sight = true) {
     const b = f.def.behavior, B = FISH_BOUNDS, rng = this.rng;
     const wantVisible = rng.next() < visibleBias;
     // most new goals lie roughly ahead; fish rarely reverse course for no reason
     const ahead = rng.next() < 0.75;
-    for (let tries = 0; tries < 60; tries++) {
+    for (let tries = 0; tries < 80; tries++) {
       out.set(lerp(B.xMin + 0.5, B.xMax - 0.5, rng.next()),
         lerp(b.zone[0], b.zone[1], Math.pow(rng.next(), 0.9)),
         lerp(B.zMin + 0.3, B.zMax - 0.15, rng.next()));
@@ -4107,9 +4212,122 @@ class Aquarium {
         ((out.x - f.position.x) * f.heading.x + (out.y - f.position.y) * f.heading.y + (out.z - f.position.z) * f.heading.z) / d < -0.1) continue;
       if (wantVisible && tries < 40 && !this.visible(out.x, out.y, out.z, 0.82)) continue;
       if (!this.isFree(out, f.clearance + 0.15)) continue;
+      if (sight && !this.clearLine(f, f.position, out)) continue;
       return out;
     }
-    return out.copy(f.position);
+    // Spawn runs before the fish has a real position, so it keeps the old fallback.
+    return sight ? this.openGoal(f, out) : out.copy(f.position);
+  }
+
+  // Straight path stays in open water. Endpoints are skipped: the fish may be sliding
+  // on rock, and the goal itself is checked by the caller.
+  clearLine(f, from, to) {
+    const dx = to.x - from.x, dy = to.y - from.y, dz = to.z - from.z;
+    const len = Math.hypot(dx, dy, dz);
+    if (len < 0.25) return true;
+    const o = this.reef.obstacle, B = FISH_BOUNDS;
+    const n = Math.ceil(len / 0.15);
+    const limit = ISO * 0.72;
+    const clearance = f.clearance;
+    const anemones = f.def.behavior.territory === 'anemone' ? null : this.reef.corals.anemones;
+    for (let i = 1; i < n; i++) {
+      const t = i / n;
+      const x = from.x + dx * t, y = from.y + dy * t, z = from.z + dz * t;
+      if (x < B.xMin || x > B.xMax || z < B.zMin || z > B.zMax || y > B.yMax) return false;
+      if (y < this.reef.sandHeight(x, z) + clearance) return false;
+      if (o.sample(x, y, z) > limit) return false;
+      if (!anemones) continue;
+      for (let a = 0; a < anemones.length; a++) {
+        const an = anemones[a];
+        const R = an.radius + clearance;
+        const qx = x - an.pos[0], qy = y - an.pos[1], qz = z - an.pos[2];
+        if (qx * qx + qy * qy + qz * qz < R * R) return false;
+      }
+    }
+    return true;
+  }
+
+  // Touching rock, coral, sand, or (for anyone but the resident clownfish) an anemone.
+  againstRock(f) {
+    const o = this.reef.obstacle, p = f.position, h = f.heading;
+    const limit = ISO * 0.8;
+    const ax = -h.z, az = h.x;
+    const side = Math.max(0.25, f.clearance + 0.15);
+    const reach = 0.5 + f.bodyLength * 0.8;
+    if (o.sample(p.x, p.y, p.z) > limit) return true;
+    if (o.sample(p.x + h.x * 0.4, p.y + h.y * 0.4, p.z + h.z * 0.4) > limit) return true;
+    if (o.sample(p.x + h.x * reach, p.y + h.y * reach * 0.3, p.z + h.z * reach) > limit) return true;
+    if (o.sample(p.x + ax * side, p.y, p.z + az * side) > limit) return true;
+    if (o.sample(p.x - ax * side, p.y, p.z - az * side) > limit) return true;
+    if (p.y < this.reef.sandHeight(p.x, p.z) + f.clearance + 0.12) return true;
+    if (f.def.behavior.territory !== 'anemone') {
+      for (const a of this.reef.corals.anemones) {
+        const R = a.radius + 0.2 + f.clearance;
+        if (Math.hypot(p.x - a.pos[0], p.y - a.pos[1], p.z - a.pos[2]) < R) return true;
+      }
+    }
+    return false;
+  }
+
+  // Least-solid direction around the fish. The fan is rotated so a second try differs.
+  openDir(f) {
+    const o = this.reef.obstacle, p = f.position, B = FISH_BOUNDS, dir = this.dir;
+    let best = Infinity;
+    const base = this.rng.next() * TAU;
+    for (let i = 0; i < 10; i++) {
+      const a = base + (i / 10) * TAU;
+      const dx = Math.cos(a), dz = Math.sin(a);
+      let score = 0;
+      for (let s = 1; s <= 3; s++) {
+        const x = p.x + dx * s * 0.55, z = p.z + dz * s * 0.55, y = p.y;
+        if (x < B.xMin + 0.4 || x > B.xMax - 0.4 || z < B.zMin + 0.3 || z > B.zMax - 0.2) { score += 2; continue; }
+        if (y < this.reef.sandHeight(x, z) + f.clearance + 0.15) score += 1.2;
+        score += o.sample(x, y, z) + o.sample(x, y + 0.35, z);
+      }
+      if (score < best) { best = score; dir.x = dx; dir.y = 0; dir.z = dz; }
+    }
+    let up = 0;
+    for (let s = 1; s <= 3; s++) {
+      const y = p.y + s * 0.45;
+      if (y > B.yMax - 0.3) { up += 2; break; }
+      up += o.sample(p.x, y, p.z);
+    }
+    if (up + 0.15 < best) dir.y = 0.65;
+    const len = Math.hypot(dir.x, dir.y, dir.z) || 1;
+    dir.x /= len; dir.y /= len; dir.z /= len;
+    return dir;
+  }
+
+  // A short goal along the open direction, used when nothing reachable is in sight.
+  openGoal(f, out) {
+    const dir = this.openDir(f);
+    for (let i = 0; i < OPEN_STEPS.length; i++) {
+      const dist = OPEN_STEPS[i];
+      out.set(f.position.x + dir.x * dist, f.position.y + dir.y * dist, f.position.z + dir.z * dist);
+      this.clearPoint(f, out);
+      if (this.isFree(out, f.clearance * 0.6) && this.clearLine(f, f.position, out)) return out;
+    }
+    return out.set(f.position.x + dir.x * 0.45, f.position.y + dir.y * 0.45, f.position.z + dir.z * 0.45);
+  }
+
+  // Leave a stall: face open water, drop a turn aimed into the reef, and pick again.
+  unstick(f) {
+    const dir = this.openDir(f);
+    f.heading.set(dir.x, dir.y, dir.z).normalize();
+    if (f.behaviorState === 'TURNING' || f.behaviorState === 'AVOIDING' || f.behaviorState === 'HOVERING' || f.behaviorState === 'RESTING') {
+      const back = f.prevState;
+      const leave = f.behaviorState === 'HOVERING' || f.behaviorState === 'RESTING' || back === 'TURNING' || back === 'AVOIDING';
+      this.setState(f, leave ? 'CRUISING' : back);
+      f.stateUntil = this.time + 3 + this.rng.next() * 3;
+    } else {
+      f.stuck = 0;
+      f.bestDist = 1e9;
+    }
+    this.chooseTarget(f);
+    const kick = f.preferredSpeed * 0.45 * this.cfg.fish.speedMultiplier;
+    if (f.speed < kick) f.speed = kick;
+    f.velocity.copy(f.heading).scale(f.speed);
+    f.anchor.copy(f.position);
   }
 
   // Move a goal out of the avoidance margin around rock, so seeking it and steering
@@ -4135,6 +4353,7 @@ class Aquarium {
       if (!this.visible(out.x, out.y, out.z, 0.9) && tries < 20) continue;
       this.clearPoint(f, out);
       if (!this.isFree(out, f.clearance * 0.7)) continue;
+      if (!this.clearLine(f, f.position, out)) continue;
       return out;
     }
     return this.randomPointInZone(f, out, 0, maxD);
@@ -4185,27 +4404,36 @@ class Aquarium {
       case 'HOVERING':
         out.copy(f.position).addScaled(f.heading, 0.15);
         if (f.homeTerritory && f.position.distTo(f.homeTerritory) > (b.territoryRadius || 1) * 1.5) this.nearHome(f, out, 0.6);
+        else if (!this.isFree(out, f.clearance * 0.5)) this.openGoal(f, out);
         break;
       case 'RESTING': {
         if (f.homeTerritory) { this.nearHome(f, out, 0.4); break; }
         const inst = reef.corals.instances;
+        let found = false;
         for (let tries = 0; tries < 30; tries++) {
           const c = inst[this.rng.int(inst.length)];
           if (c.name === 'stone' || c.name === 'shell' || c.name === 'anemone') continue;
           const H = reef.corals.variants[c.name][c.variant].height * c.scale;
           out.set(c.pos[0] + c.b.u[0] * (H + 0.25), c.pos[1] + c.b.u[1] * (H + 0.25) + 0.1, c.pos[2] + c.b.u[2] * (H + 0.25) + 0.15);
-          if (out.distTo(f.position) < 5 && this.isFree(out, f.clearance) && (tries > 20 || this.visible(out.x, out.y, out.z, 0.9))) break;
+          if (out.distTo(f.position) < 5 && this.isFree(out, f.clearance) && this.clearLine(f, f.position, out) && (tries > 20 || this.visible(out.x, out.y, out.z, 0.9))) {
+            found = true;
+            break;
+          }
         }
+        if (!found) this.openGoal(f, out);
         break;
       }
       case 'SEEKING_SHELTER':
-        if (b.territory === 'anemone' && f.homeTerritory) { out.copy(f.homeTerritory); out.y += 0.02; }
-        else if (b.territory === 'ledge') this.pickNear(reef.ledges, f, out, 1.5);
+        if (b.territory === 'anemone' && f.homeTerritory) {
+          out.copy(f.homeTerritory); out.y += 0.02;
+          if (!this.clearLine(f, f.position, out)) this.nearHome(f, out, 0.8);
+        } else if (b.territory === 'ledge') this.pickNear(reef.ledges, f, out, 1.5);
         else this.pickNear(reef.shelter, f, out, 4);
         break;
       case 'SCHOOLING': {
         const s = this.schools.get(f.schoolId);
         if (s) out.copy(s.target); else this.randomPointInZone(f, out, 2, 6);
+        if (!this.clearLine(f, f.position, out)) this.randomPointInZone(f, out, 1.2, 4, 0.4);
         break;
       }
       default:
@@ -4219,9 +4447,10 @@ class Aquarium {
     for (let tries = 0; tries < 30; tries++) {
       out.set(h.x + (this.rng.next() - 0.5) * 2 * r, h.y + (this.rng.next() - 0.35) * r, h.z + (this.rng.next() - 0.5) * 2 * r * 0.7);
       if (f.def.behavior.territory !== 'anemone') this.clearPoint(f, out);
-      if (this.isFree(out, f.clearance * 0.8)) return out;
+      if (this.isFree(out, f.clearance * 0.8) && this.clearLine(f, f.position, out)) return out;
     }
-    return out.copy(h);
+    if (this.isFree(h, f.clearance * 0.5) && this.clearLine(f, f.position, h)) return out.copy(h);
+    return this.openGoal(f, out);
   }
 
   // ---- spatial hash ---------------------------------------------------------------------------
@@ -4279,7 +4508,10 @@ class Aquarium {
       if (n) s.center.scale(1 / n);
       if (time > s.until || (n && s.center.distTo(s.target) < 1.0)) {
         this.pickSchoolTarget(s);
-        for (const m of s.members) if (m.behaviorState === 'SCHOOLING') m.targetPosition.copy(s.target);
+        for (const m of s.members) if (m.behaviorState === 'SCHOOLING') {
+          m.targetPosition.copy(s.target);
+          if (!this.clearLine(m, m.position, m.targetPosition)) this.randomPointInZone(m, m.targetPosition, 1.2, 4, 0.4);
+        }
       }
     }
     for (const f of this.fish) {
@@ -4299,13 +4531,23 @@ class Aquarium {
     // state transitions
     if (this.time >= f.stateUntil && f.behaviorState !== 'TURNING' && f.behaviorState !== 'AVOIDING') this.chooseState(f);
     const toT = tmp.subOf(f.targetPosition, f.position);
-    const dist = toT.len();
-    if (dist < f.bestDist - 0.05) { f.bestDist = dist; f.stuck = 0; } else f.stuck += dt;
+    let dist = toT.len();
     const arrive = Math.max(0.25, f.bodyLength * 0.8);
-    if (dist < arrive || f.stuck > 6) {
-      if (f.behaviorState === 'CRUISING' || f.behaviorState === 'EXPLORING' || f.stuck > 6) {
-        if (f.stuck > 6 && this.rng.next() < 0.5) this.chooseState(f);
-        else { this.chooseTarget(f); f.bestDist = 1e9; f.stuck = 0; }
+    // The speed value stays high when a corner cancels the motion, so the stall is
+    // measured from where the fish actually is. Hovering, resting and schooling may
+    // hold still; everyone else, and anyone slid along rock, may not.
+    const moved = f.position.distTo(f.anchor);
+    const settled = f.behaviorState === 'HOVERING' || f.behaviorState === 'RESTING' || f.behaviorState === 'SCHOOLING';
+    const pinned = this.againstRock(f);
+    if (dist < f.bestDist - 0.05) { f.bestDist = dist; f.stuck = 0; f.anchor.copy(f.position); }
+    else if (moved > 0.08 && !pinned) { f.stuck = 0; f.anchor.copy(f.position); }
+    else if (dist >= arrive && (!settled || pinned)) f.stuck += dt;
+    else f.stuck = Math.max(0, f.stuck - dt);
+    if (f.stuck > 1.5) {
+      this.unstick(f);
+    } else if (dist < arrive) {
+      if (f.behaviorState === 'CRUISING' || f.behaviorState === 'EXPLORING') {
+        this.chooseTarget(f); f.bestDist = 1e9; f.stuck = 0;
       } else if (f.behaviorState === 'SEEKING_SHELTER' && this.rng.next() < dt * 0.5) {
         this.setState(f, f.def.behavior.territory === 'anemone' ? 'RESTING' : 'HOVERING');
         f.stateUntil = this.time + 3 + this.rng.next() * 5;
@@ -4313,6 +4555,7 @@ class Aquarium {
       }
     }
     toT.subOf(f.targetPosition, f.position);
+    dist = toT.len();
     const dirDot = dist > 1e-4 ? toT.dot(f.heading) / dist : 1;
     if (f.behaviorState !== 'TURNING' && f.behaviorState !== 'HOVERING' && f.behaviorState !== 'RESTING' && dirDot < -0.35 && dist > 1.0) {
       this.setState(f, 'TURNING');
@@ -4415,7 +4658,9 @@ class Aquarium {
       const r = (b.territoryRadius || 1) * f.territoryScale;
       terr.subOf(f.homeTerritory, f.position);
       const d = terr.len();
-      terr.scale(d > r ? ((d - r) / d) * 0.8 : 0);
+      // A home behind rock would drag the fish into the stall we just tried to avoid.
+      if (d > r && this.clearLine(f, f.position, f.homeTerritory)) terr.scale(((d - r) / d) * 0.8);
+      else terr.set(0, 0, 0);
     }
     // reef-loving fish drift down toward the reef when well above their band
     if (b.reefAffinity > 0.5 && f.position.y > b.zone[1]) terr.y -= (f.position.y - b.zone[1]) * 0.3;
@@ -4976,6 +5221,82 @@ function createAquariumAudio(initial = {}) {
   shapeHiss(0);
   bubbleBus.gain.value = params.bubblesEnabled ? params.bubbleVolume : 0;
   return api;
+}
+
+// ---- js/music.js ----
+// Looping background music, deployed next to the page as media/track001.mp3.
+// loop restarts the file at the end; the ended handler covers players that ignore the loop flag.
+// Browsers only allow playback after a gesture, so a saved "on" starts on the next click or key.
+// The music button handles its own gesture, so a press that turns music off is not also a resume.
+
+function createSoundtrack(initial = {}, report = () => {}) {
+  const soundtrack = new Audio('media/track001.mp3');
+  soundtrack.loop = true;
+  soundtrack.preload = 'auto';
+  soundtrack.hidden = true;
+  document.body.append(soundtrack);
+
+  let enabled = !!initial.enabled;
+  let volume = clampPercent(initial.volume);
+  let musicErrorLogged = false;
+
+  function play() {
+    const pending = soundtrack.play();
+    if (!pending) return;
+    pending.catch((err) => {
+      if (err && err.name === 'NotAllowedError') return;
+      if (musicErrorLogged) return;
+      musicErrorLogged = true;
+      report('music: ' + (err && err.message ? err.message : err));
+    });
+  }
+
+  function applyVolume() {
+    soundtrack.volume = Math.min(1, Math.max(0, volume / 100));
+  }
+
+  function applyState() {
+    applyVolume();
+    if (!enabled) {
+      soundtrack.pause();
+      return;
+    }
+    play();
+  }
+
+  soundtrack.addEventListener('ended', () => {
+    if (!enabled) return;
+    soundtrack.currentTime = 0;
+    play();
+  });
+  soundtrack.addEventListener('error', () => {
+    if (musicErrorLogged) return;
+    musicErrorLogged = true;
+    report('music: could not load media/track001.mp3');
+  });
+
+  function resume(event) {
+    if (event.target instanceof Element && event.target.closest('#music')) return;
+    if (enabled && soundtrack.paused) play();
+  }
+  addEventListener('pointerdown', resume);
+  addEventListener('keydown', resume);
+
+  applyState();
+
+  return {
+    apply(next = {}) {
+      enabled = !!next.enabled;
+      volume = clampPercent(next.volume);
+      applyState();
+    },
+  };
+}
+
+function clampPercent(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 100;
+  return Math.min(100, Math.max(0, n));
 }
 
 // ---- js/place.js ----
@@ -5821,6 +6142,10 @@ const SECTIONS = [
       ['audio.bubblePitch', 'Pitch', 0, 1, 0.01],
       ['audio.bubblePlink', 'Plink', 0, 1, 0.01],
     ] },
+    { title: 'Music', settings: [
+      ['music.enabled', 'Background music', 'toggle', 'On', 'Off'],
+      ['music.volume', 'Volume', 0, 100, 1],
+    ] },
   ] },
   { title: 'Widgets', groups: [
     { title: 'Clock', groups: [
@@ -6169,6 +6494,7 @@ function createSettings(cfg, visitOnly, onChange) {
     lock('audio.bubbleRate', quiet || !cfg.audio.bubblesEnabled);
     lock('audio.bubblePitch', quiet || !cfg.audio.bubblesEnabled);
     lock('audio.bubblePlink', quiet || !cfg.audio.bubblesEnabled);
+    lock('music.volume', !cfg.music.enabled);
     lock('camera.movementSpeed', !cfg.camera.movementEnabled);
     lock('effects.particleCount', !cfg.effects.particlesEnabled);
     lock('environment.lightRayIntensity', !cfg.effects.lightRaysEnabled);
@@ -6179,6 +6505,13 @@ function createSettings(cfg, visitOnly, onChange) {
     button.setAttribute('aria-pressed', String(on));
     button.classList.toggle('on', on);
     button.textContent = on ? 'Sound on' : 'Sound off';
+  }
+  function paintMusic() {
+    const button = document.getElementById('music');
+    const on = cfg.music.enabled;
+    button.setAttribute('aria-pressed', String(on));
+    button.classList.toggle('on', on);
+    button.textContent = on ? 'Music on' : 'Music off';
   }
   function paintScene() {
     const button = document.getElementById('scene');
@@ -6263,6 +6596,7 @@ function createSettings(cfg, visitOnly, onChange) {
     }
     refreshLocks();
     paintSound();
+    paintMusic();
     paintScene();
     applyChrome();
     remember();
@@ -6420,6 +6754,7 @@ function createSettings(cfg, visitOnly, onChange) {
       [']', 'Next scene'],
       ['[', 'Previous scene'],
       ['M', 'Turn sound on or off'],
+      ['N', 'Turn music on or off'],
       ['T', 'Show or hide the clock'],
       ['F', 'Show or hide the weather'],
     ]) {
@@ -6514,6 +6849,7 @@ function createSettings(cfg, visitOnly, onChange) {
     refreshPlaceLabels();
     refreshLocks();
     paintSound();
+    paintMusic();
     paintScene();
     applyChrome();
     remember();
@@ -6535,6 +6871,7 @@ function createSettings(cfg, visitOnly, onChange) {
     refreshPlaceLabels();
     refreshLocks();
     paintSound();
+    paintMusic();
     paintScene();
     applyChrome();
     remember();
@@ -6565,6 +6902,10 @@ function createSettings(cfg, visitOnly, onChange) {
   document.getElementById('sound').addEventListener('click', (event) => {
     event.stopPropagation();
     commit('audio.enabled', !cfg.audio.enabled);
+  });
+  document.getElementById('music').addEventListener('click', (event) => {
+    event.stopPropagation();
+    commit('music.enabled', !cfg.music.enabled);
   });
   document.getElementById('scene').addEventListener('click', (event) => {
     event.stopPropagation();
@@ -6737,12 +7078,14 @@ function createSettings(cfg, visitOnly, onChange) {
       cycleScene(event.code === 'BracketRight' ? 1 : -1);
     }
     if (event.code === 'KeyM') commit('audio.enabled', !cfg.audio.enabled);
+    if (event.code === 'KeyN') commit('music.enabled', !cfg.music.enabled);
     if (event.code === 'KeyT') commit('clock.enabled', !cfg.clock.enabled);
     if (event.code === 'KeyF') commit('weather.enabled', !cfg.weather.enabled);
   });
 
   refreshLocks();
   paintSound();
+  paintMusic();
   paintScene();
   applyChrome();
   refreshPlaceLabels();
@@ -6779,6 +7122,7 @@ function createSettings(cfg, visitOnly, onChange) {
 
 
 
+
 const qs = new URLSearchParams(location.search);
 const SHOT = qs.get('shot');
 const SHOT_FRAMES = Number(qs.get('frames')) || 240;
@@ -6788,6 +7132,7 @@ const BU = GPUBufferUsage, TU = GPUTextureUsage, SS = GPUShaderStage;
 const MSAA = 4;
 const HDR = 'rgba16float';
 const BLOOM_LEVELS = 5;
+const SCENE_DEPTH = 'depth24plus';
 // a uniform-buffer copy of the time wraps after this long; fish phases live on the CPU
 const SHADER_TIME_WRAP = 40000;
 
@@ -6795,7 +7140,48 @@ function log(msg) {
   console.log(msg);
   if (SHOT || qs.get('log') === '1') fetch('/__log', { method: 'POST', body: String(msg) }).catch(() => {});
 }
+const loadingEl = document.getElementById('loading');
+const loadingStatus = document.getElementById('loading-status');
+const loadingBar = document.getElementById('loading-bar');
+
+function reportLoad(message, amount) {
+  if (loadingStatus && loadingStatus.textContent !== message) loadingStatus.textContent = message;
+  if (loadingBar) loadingBar.style.transform = `scaleX(${amount})`;
+}
+// Two frames so the status paints before the next long compile. The timeout keeps startup
+// moving if the tab is not painting.
+function paintLoad(message, amount) {
+  reportLoad(message, amount);
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = () => { if (!settled) { settled = true; resolve(); } };
+    requestAnimationFrame(() => requestAnimationFrame(finish));
+    setTimeout(finish, 80);
+  });
+}
+function releaseApp() {
+  for (const id of ['c', 'hud', 'toolbar', 'clock-widget', 'weather-widget', 'scene-label', 'panel']) {
+    document.getElementById(id)?.removeAttribute('inert');
+  }
+}
+function dismissLoad() {
+  if (!loadingEl || loadingEl.classList.contains('done')) return;
+  releaseApp();
+  loadingEl.classList.add('done');
+  loadingEl.setAttribute('aria-busy', 'false');
+  const remove = () => { if (loadingEl.isConnected) loadingEl.remove(); };
+  loadingEl.addEventListener('transitionend', (event) => {
+    if (event.propertyName === 'opacity') remove();
+  });
+  setTimeout(remove, 2400);
+}
+function dropLoad() {
+  releaseApp();
+  loadingEl?.remove();
+}
+
 function fail(msg) {
+  dropLoad();
   const el = document.getElementById('err');
   el.textContent = msg;
   el.style.display = 'flex';
@@ -6810,10 +7196,32 @@ const linearColor = (hex) => hexToRgb(hex).map(srgbToLinear);
 
 async function main() {
   const { cfg, visitOnly } = prepareConfig();
+  await paintLoad('Looking for a graphics device', 0.08);
   if (!navigator.gpu) fail('WebGPU is not available in this browser.');
   const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
   if (!adapter) fail('No WebGPU adapter found.');
-  const device = await adapter.requestDevice();
+  const wantTimestamps = adapter.features.has('timestamp-query');
+  await paintLoad('Starting the graphics device', 0.16);
+  let device;
+  try {
+    device = await adapter.requestDevice({ requiredFeatures: wantTimestamps ? ['timestamp-query'] : [] });
+  } catch (e) {
+    device = await adapter.requestDevice();
+  }
+  const hasTS = device.features.has('timestamp-query');
+  let gpuName = 'unknown';
+  try {
+    const info = adapter.info || (adapter.requestAdapterInfo && await adapter.requestAdapterInfo());
+    if (info) gpuName = info.description || info.device || info.vendor || gpuName;
+  } catch (e) { /* adapter info is optional */ }
+  log(`gpu: ${gpuName}`);
+  const ts = hasTS ? {
+    querySet: device.createQuerySet({ type: 'timestamp', count: 2 }),
+    resolve: device.createBuffer({ size: 16, usage: BU.QUERY_RESOLVE | BU.COPY_SRC }),
+    read: device.createBuffer({ size: 16, usage: BU.MAP_READ | BU.COPY_DST }),
+    pending: false,
+    ms: 0,
+  } : null;
   device.lost.then((i) => log('device lost: ' + i.message));
   device.onuncapturederror = (e) => log('GPU error: ' + e.error.message);
 
@@ -6950,6 +7358,7 @@ async function main() {
     cancelAnimationFrame(reefFrame);
     reefFrame = requestAnimationFrame(() => loadReef(sceneId, true));
   }
+  await paintLoad('Building the reef', 0.28);
   loadReef(cfg.environment.scene, false);
 
   // fish: one mesh + instance buffer + species uniform per species
@@ -6969,6 +7378,7 @@ async function main() {
   const STYLE = { 0: 0, 1: 1, 2: 2, 3: 3, 4: 4 };
   const fishSlots = {};
   const models = cfg.assets && cfg.assets.models || {};
+  await paintLoad('Stocking the fish', 0.46);
   for (const key of SPECIES_KEYS) {
     const def = SPECIES[key];
     const count = FISH_CAP;
@@ -7025,6 +7435,7 @@ async function main() {
   const sunRgb = [1, 0.97, 0.9];
   const lightViewProj = new Float32Array(16);
   let shadowStamp = '';
+  let shadowRefresh = true;
   // High sun keeps the original shadow frustum. A lower sun (morning, sunset) needs a
   // wider one so the tank still falls inside the map.
   function updateLight() {
@@ -7093,10 +7504,18 @@ async function main() {
       { binding: 0, visibility: SS.VERTEX | SS.FRAGMENT, buffer: { type: 'uniform' } },
       { binding: 1, visibility: SS.VERTEX | SS.FRAGMENT, texture: { sampleType: 'depth' } },
       { binding: 2, visibility: SS.VERTEX | SS.FRAGMENT, sampler: { type: 'comparison' } },
+      { binding: 3, visibility: SS.FRAGMENT, texture: { sampleType: 'float' } },
+      { binding: 4, visibility: SS.FRAGMENT, sampler: { type: 'filtering' } },
     ],
   });
   const shadowFrameBGL = device.createBindGroupLayout({ label: 'shadow frame', entries: [{ binding: 0, visibility: SS.VERTEX | SS.FRAGMENT, buffer: { type: 'uniform' } }] });
   const raysBGL = device.createBindGroupLayout({ label: 'rays', entries: [{ binding: 0, visibility: SS.FRAGMENT, texture: { sampleType: 'depth', multisampled: true } }] });
+  const raysUpBGL = device.createBindGroupLayout({
+    label: 'rays up', entries: [
+      { binding: 0, visibility: SS.FRAGMENT, texture: { sampleType: 'float' } },
+      { binding: 1, visibility: SS.FRAGMENT, sampler: { type: 'filtering' } },
+    ],
+  });
   const postBGL = device.createBindGroupLayout({
     label: 'bloom', entries: [
       { binding: 0, visibility: SS.FRAGMENT, texture: { sampleType: 'float' } },
@@ -7136,7 +7555,7 @@ async function main() {
 
   const premult = { color: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha' }, alpha: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha' } };
   const additive = { color: { srcFactor: 'one', dstFactor: 'one' }, alpha: { srcFactor: 'one', dstFactor: 'one' } };
-  const depthState = (write, compare = 'less') => ({ format: 'depth32float', depthWriteEnabled: write, depthCompare: compare });
+  const depthState = (write, compare = 'less') => ({ format: SCENE_DEPTH, depthWriteEnabled: write, depthCompare: compare });
 
   async function scenePipe(label, code, pl, buffers, opts = {}) {
     const module = await shader(code, label);
@@ -7168,8 +7587,9 @@ async function main() {
     });
   }
 
+  await paintLoad('Preparing the tank', 0.64);
   const [rockPipe, sandPipe, coralPipe, fishPipe, bgPipe, particlePipe, bubblePipe,
-    rockShadowPipe, coralShadowPipe, fishShadowPipe, raysPipe, downPipe, upPipe, compPipe] = await Promise.all([
+    rockShadowPipe, coralShadowPipe, fishShadowPipe, raysPipe, raysUpPipe, causticPipe, downPipe, upPipe, compPipe] = await Promise.all([
     scenePipe('rock', ROCK, mainLayout, [rockLayout]),
     scenePipe('sand', SAND, mainLayout, [rockLayout]),
     scenePipe('coral', CORAL, mainLayout, [coralVLayout, coralILayout]),
@@ -7181,6 +7601,8 @@ async function main() {
     shadowPipe('coral shadow', CORAL_SHADOW, shadowLayout, [coralVLayout, coralILayout]),
     shadowPipe('fish shadow', FISH_SHADOW, fishShadowLayout, [fishVLayout, fishILayout]),
     fullscreenPipe('rays', RAYS, raysLayout, HDR, additive),
+    fullscreenPipe('rays up', RAYS_UP, layout(raysUpBGL), HDR, additive),
+    fullscreenPipe('caustics', CAUSTIC_BAKE, layout(shadowFrameBGL), 'rgba8unorm'),
     fullscreenPipe('bloom down', BLOOM_DOWN, layout(postBGL), HDR),
     fullscreenPipe('bloom up', BLOOM_UP, layout(postBGL), HDR, additive),
     fullscreenPipe('composite', COMPOSITE, layout(compBGL), swapFormat),
@@ -7194,7 +7616,20 @@ async function main() {
   const staticShadow = device.createTexture({ label: 'static shadow', size: [SHADOW_SIZE, SHADOW_SIZE], format: 'depth32float', usage: TU.RENDER_ATTACHMENT | TU.COPY_SRC });
   const dynShadow = device.createTexture({ label: 'shadow', size: [SHADOW_SIZE, SHADOW_SIZE], format: 'depth32float', usage: TU.RENDER_ATTACHMENT | TU.TEXTURE_BINDING | TU.COPY_DST });
   const cmpSampler = device.createSampler({ compare: 'less', magFilter: 'linear', minFilter: 'linear', addressModeU: 'clamp-to-edge', addressModeV: 'clamp-to-edge' });
-  const frameBG = device.createBindGroup({ layout: frameBGL, entries: [{ binding: 0, resource: { buffer: frameUB } }, { binding: 1, resource: dynShadow.createView() }, { binding: 2, resource: cmpSampler }] });
+  const causticTex = device.createTexture({
+    label: 'caustics', size: [CAUSTIC_SIZE, CAUSTIC_SIZE], format: 'rgba8unorm',
+    usage: TU.TEXTURE_BINDING | TU.RENDER_ATTACHMENT,
+  });
+  const causticView = causticTex.createView();
+  const frameBG = device.createBindGroup({
+    layout: frameBGL, entries: [
+      { binding: 0, resource: { buffer: frameUB } },
+      { binding: 1, resource: dynShadow.createView() },
+      { binding: 2, resource: cmpSampler },
+      { binding: 3, resource: causticView },
+      { binding: 4, resource: linearSampler },
+    ],
+  });
   const shadowBG = device.createBindGroup({ layout: shadowFrameBGL, entries: [{ binding: 0, resource: { buffer: frameUB } }] });
 
   const env = cfg.environment;
@@ -7225,7 +7660,21 @@ async function main() {
       f[80 + i * 4] = s ? s[0] : 0; f[81 + i * 4] = s ? s[1] : 0; f[82 + i * 4] = s ? s[2] : 0; f[83 + i * 4] = s ? 1 : 0;
     }
     f[104] = sunRgb[0]; f[105] = sunRgb[1]; f[106] = sunRgb[2]; f[107] = 0;
+    const rw = Math.max(1, W >> 1), rh = Math.max(1, H >> 1);
+    f[108] = W / rw; f[109] = H / rh; f[110] = 0; f[111] = 0;
+    const range = causticRange();
+    f[112] = range[0]; f[113] = range[1]; f[114] = range[2]; f[115] = range[3];
     device.queue.writeBuffer(frameUB, 0, f);
+  }
+  // s = xz + light shear * depth. Cover the rock field plus the deepest point under this sun.
+  function causticRange() {
+    const ly = Math.max(L[1], 0.25);
+    const sx = L[0] / ly, sz = L[2] / ly;
+    const dMax = TANK.surfaceY + 0.8;
+    const ox0 = Math.min(0, sx * dMax), ox1 = Math.max(0, sx * dMax);
+    const oz0 = Math.min(0, sz * dMax), oz1 = Math.max(0, sz * dMax);
+    const pad = 0.8;
+    return [-14 + ox0 - pad, -11 + oz0 - pad, 14 + ox1 + pad, 0.6 + oz1 + pad];
   }
 
   // static casters (rock and hard corals) are rendered once, and again when the sun moves
@@ -7242,7 +7691,9 @@ async function main() {
     for (const d of geo.draws) if (!d.soft) pass.drawIndexed(d.indexCount, d.instanceCount, d.firstIndex, d.baseVertex, d.firstInstance);
     pass.end();
     device.queue.submit([enc.finish()]);
+    shadowRefresh = true;
   }
+  await paintLoad('Lighting the water', 0.84);
   updateLight();
   shadowStamp = L.map((n) => n.toFixed(4)).join(',');
   renderStaticShadow();
@@ -7260,8 +7711,10 @@ async function main() {
     const all = [];
     const add = (t) => { all.push(t); return t; };
     const colorMS = add(tex('color ms', w, h, HDR, TU.RENDER_ATTACHMENT, MSAA));
-    const depthMS = add(tex('depth ms', w, h, 'depth32float', TU.RENDER_ATTACHMENT | TU.TEXTURE_BINDING, MSAA));
+    const depthMS = add(tex('depth ms', w, h, SCENE_DEPTH, TU.RENDER_ATTACHMENT | TU.TEXTURE_BINDING, MSAA));
     const hdr = add(tex('hdr', w, h, HDR, TU.RENDER_ATTACHMENT | TU.TEXTURE_BINDING));
+    const rw = Math.max(1, w >> 1), rh = Math.max(1, h >> 1);
+    const raysTex = add(tex('shafts', rw, rh, HDR, TU.RENDER_ATTACHMENT | TU.TEXTURE_BINDING));
     const levels = [];
     let lw = w, lh = h;
     for (let i = 0; i < BLOOM_LEVELS; i++) {
@@ -7283,7 +7736,9 @@ async function main() {
     });
     T = {
       all, colorMSView: colorMS.createView(), depthMSView: depthMS.createView(), hdrView: hdr.createView(), levels, down, up,
+      raysView: raysTex.createView(),
       raysBG: device.createBindGroup({ layout: raysBGL, entries: [{ binding: 0, resource: depthMS.createView() }] }),
+      raysUpBG: device.createBindGroup({ layout: raysUpBGL, entries: [{ binding: 0, resource: raysTex.createView() }, { binding: 1, resource: linearSampler }] }),
       compBG: device.createBindGroup({ layout: compBGL, entries: [{ binding: 0, resource: hdr.createView() }, { binding: 1, resource: levels[0].view }, { binding: 2, resource: linearSampler }, { binding: 3, resource: { buffer: compUB } }] }),
     };
     W = w; H = h;
@@ -7352,8 +7807,9 @@ async function main() {
   // ------------------------------------------------------------------------------------
   const hud = document.getElementById('hud');
   let audio = cfg.audio.enabled ? createAquariumAudio(cfg.audio) : null;
+  const soundtrack = createSoundtrack(cfg.music, log);
   let time = Number(qs.get('t')) || 0, last = performance.now(), lastShown = 0, frameNo = 0, fade = SHOT ? 1 : 0;
-  let shooting = false, hudTimer = 0, hudFrames = 0, cpuMs = 0, nextDue = 0;
+  let shooting = false, hudTimer = 0, hudFrames = 0, cpuMs = 0, nextDue = 0, pictureShown = false;
   const curVec = { x: 0, y: 0, z: 0 };
   const passes = {
     shadow: { colorAttachments: [], depthStencilAttachment: { view: dynShadow.createView(), depthLoadOp: 'load', depthStoreOp: 'store' } },
@@ -7404,9 +7860,23 @@ async function main() {
     if (audio) audio.update(dt, sim);
 
     const enc = device.createCommandEncoder();
-    // dynamic shadow casters on top of the static map
-    enc.copyTextureToTexture({ texture: staticShadow }, { texture: dynShadow }, [SHADOW_SIZE, SHADOW_SIZE]);
+    const stamp = ts && !ts.pending;
     {
+      const pass = enc.beginRenderPass({
+        colorAttachments: [{ view: causticView, clearValue: [1, 1, 0, 1], loadOp: 'clear', storeOp: 'store' }],
+        timestampWrites: stamp ? { querySet: ts.querySet, beginningOfPassWriteIndex: 0 } : undefined,
+      });
+      pass.setPipeline(causticPipe);
+      pass.setBindGroup(0, shadowBG);
+      pass.draw(3);
+      pass.end();
+    }
+    // Fish and soft corals move slowly. At 60 FPS their shadows update every other frame;
+    // a 16 ms lag is a fraction of a shadow texel. At 30 FPS every frame is refreshed.
+    const refreshShadows = shadowRefresh || fpsTarget < 50 || (frameNo & 1) === 0 || (SHOT && frameNo + 1 >= SHOT_FRAMES);
+    if (refreshShadows) {
+      shadowRefresh = false;
+      enc.copyTextureToTexture({ texture: staticShadow }, { texture: dynShadow }, [SHADOW_SIZE, SHADOW_SIZE]);
       const pass = enc.beginRenderPass(passes.shadow);
       pass.setBindGroup(0, shadowBG);
       pass.setPipeline(coralShadowPipe);
@@ -7452,11 +7922,16 @@ async function main() {
       pass.end();
     }
     if (cfg.effects.lightRaysEnabled && env.lightRayIntensity > 0) {
-      const pass = enc.beginRenderPass({ colorAttachments: [{ view: T.hdrView, loadOp: 'load', storeOp: 'store' }] });
-      pass.setPipeline(raysPipe);
-      pass.setBindGroup(0, frameBG); pass.setBindGroup(1, T.raysBG);
-      pass.draw(3);
-      pass.end();
+      const march = enc.beginRenderPass({ colorAttachments: [{ view: T.raysView, clearValue: [0, 0, 0, 0], loadOp: 'clear', storeOp: 'store' }] });
+      march.setPipeline(raysPipe);
+      march.setBindGroup(0, frameBG); march.setBindGroup(1, T.raysBG);
+      march.draw(3);
+      march.end();
+      const up = enc.beginRenderPass({ colorAttachments: [{ view: T.hdrView, loadOp: 'load', storeOp: 'store' }] });
+      up.setPipeline(raysUpPipe);
+      up.setBindGroup(0, T.raysUpBG);
+      up.draw(3);
+      up.end();
     }
     for (let i = 0; i < BLOOM_LEVELS; i++) {
       const pass = enc.beginRenderPass({ colorAttachments: [{ view: T.levels[i].view, clearValue: [0, 0, 0, 1], loadOp: 'clear', storeOp: 'store' }] });
@@ -7471,8 +7946,16 @@ async function main() {
     device.queue.writeBuffer(compUB, 0, compF);
     const swapTex = ctx.getCurrentTexture();
     {
-      const pass = enc.beginRenderPass({ colorAttachments: [{ view: swapTex.createView(), clearValue: [0, 0, 0, 1], loadOp: 'clear', storeOp: 'store' }] });
+      const pass = enc.beginRenderPass({
+        colorAttachments: [{ view: swapTex.createView(), clearValue: [0, 0, 0, 1], loadOp: 'clear', storeOp: 'store' }],
+        timestampWrites: stamp ? { querySet: ts.querySet, endOfPassWriteIndex: 1 } : undefined,
+      });
       pass.setPipeline(compPipe); pass.setBindGroup(0, T.compBG); pass.draw(3); pass.end();
+    }
+    if (stamp) {
+      enc.resolveQuerySet(ts.querySet, 0, 2, ts.resolve, 0);
+      enc.copyBufferToBuffer(ts.resolve, 0, ts.read, 0, 16);
+      ts.pending = true;
     }
     let readBuf = null, bpr = 0;
     frameNo++;
@@ -7483,13 +7966,28 @@ async function main() {
       enc.copyTextureToBuffer({ texture: swapTex }, { buffer: readBuf, bytesPerRow: bpr }, [W, H]);
     }
     device.queue.submit([enc.finish()]);
+    if (!pictureShown) {
+      pictureShown = true;
+      reportLoad('Settling the water', 1);
+      dismissLoad();
+    }
+    if (stamp) {
+      ts.read.mapAsync(GPUMapMode.READ).then(() => {
+        const r = new BigUint64Array(ts.read.getMappedRange());
+        const ms = Number(r[1] - r[0]) / 1e6;
+        if (ms > 0 && ms < 500) ts.ms = ts.ms ? ts.ms * 0.85 + ms * 0.15 : ms;
+        ts.read.unmap();
+        ts.pending = false;
+      }, () => { ts.pending = false; });
+    }
     if (readBuf) saveShot(readBuf, bpr);
 
     if (cfg.display.showInfo) {
       hudFrames++;
       hudTimer += dt;
       if (hudTimer > 0.5) {
-        hud.textContent = `${(hudFrames / hudTimer).toFixed(0)} fps  ${W}x${H}  scale ${renderScale.toFixed(2)}  target ${fpsTarget}  fish ${sim.fish.length}`;
+        const gpu = ts && ts.ms ? `  gpu ${ts.ms.toFixed(1)} ms` : '';
+        hud.textContent = `${(hudFrames / hudTimer).toFixed(0)} fps  ${W}x${H}  scale ${renderScale.toFixed(2)}  target ${fpsTarget}  fish ${sim.fish.length}${gpu}`;
         if (qs.get('log') === '1' && frameNo % 600 < 40) log(hud.textContent + `  cpu ${cpuMs.toFixed(2)} ms`);
         hudTimer = 0; hudFrames = 0;
       }
@@ -7516,7 +8014,7 @@ async function main() {
     oc.getContext('2d').putImageData(img, 0, 0);
     const blob = await oc.convertToBlob({ type: 'image/png' });
     await fetch('/__shot?name=' + encodeURIComponent(SHOT), { method: 'POST', body: blob });
-    log('shot saved ' + SHOT);
+    log(`shot saved ${SHOT}  gpu ${ts && ts.ms ? ts.ms.toFixed(2) + ' ms' : 'n/a'}`);
     document.title = 'SHOT DONE';
   }
 
@@ -7547,6 +8045,7 @@ async function main() {
   }
   let widgets = null;
   reefSwap = true;
+  await paintLoad('Opening the controls', 0.94);
   const settings = createSettings(cfg, visitOnly, (path) => {
     if (path === 'environment.waterColor' || path === 'environment.scene') refreshWater();
     if (path === 'environment.scene') queueReef(cfg.environment.scene);
@@ -7564,6 +8063,7 @@ async function main() {
     }
     if (path === 'display.fullscreen' && !cfg.display.fullscreen && document.fullscreenElement) document.exitFullscreen().catch(() => {});
     if (path.startsWith('audio.')) applyAudio();
+    if (path.startsWith('music.')) soundtrack.apply(cfg.music);
     if (path.startsWith('fish.') && VIEW !== 'lineup') {
       clearTimeout(restockTimer);
       restockTimer = setTimeout(restock, 200);
@@ -7591,10 +8091,16 @@ async function main() {
   document.body.classList.add('idle');
 
   resize();
+  reportLoad('Settling the water', 0.97);
   requestAnimationFrame(frame);
 }
 
-main().catch((e) => { if (!String(e.message).startsWith('WebGPU') && !String(e.message).startsWith('No WebGPU')) log('main failed: ' + (e.stack || e)); });
+main().catch((e) => {
+  dropLoad();
+  if (!String(e.message).startsWith('WebGPU') && !String(e.message).startsWith('No WebGPU') && !String(e.message).startsWith('Shader')) {
+    log('main failed: ' + (e.stack || e));
+  }
+});
 
 
 </script>

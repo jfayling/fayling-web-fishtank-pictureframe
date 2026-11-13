@@ -28,7 +28,8 @@ resolution), environment (water colour, clarity, ambient light, caustics, curren
 rays, bloom, exposure), fish (population, speed, schooling, collision avoidance, species
 distribution), effects (bubbles, particles, rays, coral sway, particle count), camera
 (optional slow pan, field of view), audio (off by default; master and bubble
-layers, with hiss off until it is turned on), clock and weather widgets, and optional per-species models.
+layers, with hiss off until it is turned on), background music (off by default;
+loops `media/track001.mp3`), clock and weather widgets, and optional per-species models.
 The simulation and renderer only read this object.
 
 Any key can be overridden from the URL, for example
@@ -47,7 +48,8 @@ is shown it is generated, and then kept for the rest of the visit. Editing the w
 or the light yourself keeps the result as Custom, on the formation you were viewing.
 `?scene=sunset` shows that scene for one visit. Changes apply
 immediately and are remembered in this browser.
-Sound toggles with the toolbar button or M. T shows or hides the clock, and F shows or
+Sound toggles with the toolbar button or M. Background music toggles with the
+toolbar button or N, and its volume is a percent. T shows or hides the clock, and F shows or
 hides the weather. Esc closes the panel, or the location search when that is open.
 `?info=1` shows the frame-rate readout for that visit.
 
@@ -71,6 +73,7 @@ side), `?cam=x,y,z,tx,ty,tz` (camera override), `?t=seconds`, `?w=&h=` (forced s
 | `js/behavior.js` | `FishEntity` and the `Aquarium` simulation: state machine (cruising, exploring, hovering, turning, avoiding, schooling, seeking shelter, resting), steering forces, spatial hash, hard collision constraints |
 | `js/wgsl/*` | Shaders: fish deformation and colour patterns, rock/sand/coral materials, caustics, shadows, water absorption and fog, particles, bubbles, light shafts, bloom and AgX tone mapping |
 | `js/gltf.js` | GLB/glTF import for replacing procedural fish with authored models |
+| `js/music.js` | Looping background music from `media/track001.mp3` |
 | `js/place.js` | City, postal-code, and coordinate lookup for the weather location |
 | `js/clock.js` | Clock overlay: face, size, color, and screen position |
 | `js/weather.js` | Weather card: Open-Meteo forecast and U.S. weather alerts |

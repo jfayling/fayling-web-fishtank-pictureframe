@@ -75,6 +75,10 @@ const SECTIONS = [
       ['audio.bubblePitch', 'Pitch', 0, 1, 0.01],
       ['audio.bubblePlink', 'Plink', 0, 1, 0.01],
     ] },
+    { title: 'Music', settings: [
+      ['music.enabled', 'Background music', 'toggle', 'On', 'Off'],
+      ['music.volume', 'Volume', 0, 100, 1],
+    ] },
   ] },
   { title: 'Widgets', groups: [
     { title: 'Clock', groups: [
@@ -423,6 +427,7 @@ export function createSettings(cfg, visitOnly, onChange) {
     lock('audio.bubbleRate', quiet || !cfg.audio.bubblesEnabled);
     lock('audio.bubblePitch', quiet || !cfg.audio.bubblesEnabled);
     lock('audio.bubblePlink', quiet || !cfg.audio.bubblesEnabled);
+    lock('music.volume', !cfg.music.enabled);
     lock('camera.movementSpeed', !cfg.camera.movementEnabled);
     lock('effects.particleCount', !cfg.effects.particlesEnabled);
     lock('environment.lightRayIntensity', !cfg.effects.lightRaysEnabled);
@@ -433,6 +438,13 @@ export function createSettings(cfg, visitOnly, onChange) {
     button.setAttribute('aria-pressed', String(on));
     button.classList.toggle('on', on);
     button.textContent = on ? 'Sound on' : 'Sound off';
+  }
+  function paintMusic() {
+    const button = document.getElementById('music');
+    const on = cfg.music.enabled;
+    button.setAttribute('aria-pressed', String(on));
+    button.classList.toggle('on', on);
+    button.textContent = on ? 'Music on' : 'Music off';
   }
   function paintScene() {
     const button = document.getElementById('scene');
@@ -517,6 +529,7 @@ export function createSettings(cfg, visitOnly, onChange) {
     }
     refreshLocks();
     paintSound();
+    paintMusic();
     paintScene();
     applyChrome();
     remember();
@@ -674,6 +687,7 @@ export function createSettings(cfg, visitOnly, onChange) {
       [']', 'Next scene'],
       ['[', 'Previous scene'],
       ['M', 'Turn sound on or off'],
+      ['N', 'Turn music on or off'],
       ['T', 'Show or hide the clock'],
       ['F', 'Show or hide the weather'],
     ]) {
@@ -768,6 +782,7 @@ export function createSettings(cfg, visitOnly, onChange) {
     refreshPlaceLabels();
     refreshLocks();
     paintSound();
+    paintMusic();
     paintScene();
     applyChrome();
     remember();
@@ -789,6 +804,7 @@ export function createSettings(cfg, visitOnly, onChange) {
     refreshPlaceLabels();
     refreshLocks();
     paintSound();
+    paintMusic();
     paintScene();
     applyChrome();
     remember();
@@ -819,6 +835,10 @@ export function createSettings(cfg, visitOnly, onChange) {
   document.getElementById('sound').addEventListener('click', (event) => {
     event.stopPropagation();
     commit('audio.enabled', !cfg.audio.enabled);
+  });
+  document.getElementById('music').addEventListener('click', (event) => {
+    event.stopPropagation();
+    commit('music.enabled', !cfg.music.enabled);
   });
   document.getElementById('scene').addEventListener('click', (event) => {
     event.stopPropagation();
@@ -991,12 +1011,14 @@ export function createSettings(cfg, visitOnly, onChange) {
       cycleScene(event.code === 'BracketRight' ? 1 : -1);
     }
     if (event.code === 'KeyM') commit('audio.enabled', !cfg.audio.enabled);
+    if (event.code === 'KeyN') commit('music.enabled', !cfg.music.enabled);
     if (event.code === 'KeyT') commit('clock.enabled', !cfg.clock.enabled);
     if (event.code === 'KeyF') commit('weather.enabled', !cfg.weather.enabled);
   });
 
   refreshLocks();
   paintSound();
+  paintMusic();
   paintScene();
   applyChrome();
   refreshPlaceLabels();
