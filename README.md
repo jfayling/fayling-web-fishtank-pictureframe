@@ -92,17 +92,19 @@ triggerfish, the lionfish's slow fin sculling, the eel's anguilliform wave). Pec
 median fins move independently, the body bends and banks into turns, and fins are
 translucent.
 
-**Rendering.** 4x MSAA HDR forward pass; a 2048² shadow map whose static part (rock and hard
-corals) is rendered once and copied each frame before soft corals and fish are added;
-animated caustics projected along the light; ray-marched light shafts occluded by the
-shadow map; GPU-generated marine snow and bubble streams; absorption and fog by the length
-of the view ray inside the water; bloom with a firefly-safe first pass; AgX tone mapping.
+**Rendering.** 4× MSAA HDR forward pass. The live-rock pores are shaded from the pixel
+footprint, so the relief noise runs once per pixel. Rock and hard corals are drawn once
+into a 1024² shadow map; that map is copied and the soft corals and fish are added every
+other frame at 60 FPS (every frame at 30). Caustics are drawn into a 1024² projection and
+sampled, with the same depth blur as before. Light shafts march at half resolution and are
+blended back up. Marine snow, bubbles, absorption, fog, a five-level bloom, and AgX tone
+mapping are unchanged.
 
-**Performance.** Measured on an RTX A5000 at 1920×1080: about 140 FPS uncapped with the
-default 34 fish (so the 60 FPS cap holds with large headroom), and the simulation takes
-about 0.25 ms of CPU per frame. Per-frame work allocates nothing; fish and corals are
-instanced. If frames run long, the render scale drops step by step to
-`display.minRenderScale`, then the frame rate drops to 30 FPS.
+**Performance.** The picture frame targets 60 FPS. Per-frame work allocates nothing; fish
+and corals are instanced, and the simulation is a fraction of a millisecond on the CPU.
+If frames run long, the render scale drops step by step to `display.minRenderScale`, then
+the frame rate drops to 30 FPS. `?info=1` includes the GPU frame time when the device
+supports timestamp queries.
 
 ## Custom fish models
 

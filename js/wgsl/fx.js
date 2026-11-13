@@ -140,7 +140,9 @@ fn shaft(q: vec3f, t: f32) -> f32 {
   return smoothstep(0.42, 0.85, n);
 }
 @fragment fn fs(in: VOut) -> @location(0) vec4f {
-  let pix = vec2i(in.pos.xy);
+  // The shaft target is half the scene size. aux.xy scales those pixels back to the depth buffer.
+  let dims = vec2i(textureDimensions(sceneDepth));
+  let pix = clamp(vec2i(vec2f(in.pos.xy) * F.aux.xy), vec2i(0), dims - vec2i(1));
   let depth = textureLoad(sceneDepth, pix, 0);
   let w = F.invViewProj * vec4f(in.ndc, depth, 1.0);
   let world = w.xyz / w.w;
@@ -178,5 +180,22 @@ fn shaft(q: vec3f, t: f32) -> f32 {
   let tint = mix(scatter, vec3f(1.0), saturate(distance(F.sun.rgb, vec3f(1.0, 0.97, 0.9)) * 2.2));
   let col = acc * phase * sunColor() * tint * F.params.y * 0.035;
   return vec4f(col, 0.0);
+}
+`;
+
+// Bilinear expand of the half-resolution shafts onto the HDR image.
+export const RAYS_UP = /* wgsl */ `
+struct VO { @builtin(position) pos: vec4f, @location(0) uv: vec2f };
+@vertex fn vs(@builtin(vertex_index) i: u32) -> VO {
+  let p = vec2f(f32((i << 1u) & 2u), f32(i & 2u));
+  var o: VO;
+  o.pos = vec4f(p * 2.0 - 1.0, 0.0, 1.0);
+  o.uv = vec2f(p.x, 1.0 - p.y);
+  return o;
+}
+@group(0) @binding(0) var src: texture_2d<f32>;
+@group(0) @binding(1) var samp: sampler;
+@fragment fn fs(in: VO) -> @location(0) vec4f {
+  return vec4f(textureSampleLevel(src, samp, in.uv, 0.0).rgb, 0.0);
 }
 `;

@@ -22,10 +22,10 @@ import { Aquarium } from './behavior.js';
 import { sceneById } from './scenes.js';
 import { loadGltf, fishMeshFromModel } from './gltf.js';
 import { createAquariumAudio } from './audio.js';
-import { FRAME_FLOATS, SHADOW_SIZE } from './wgsl/common.js';
+import { CAUSTIC_BAKE, CAUSTIC_SIZE, FRAME_FLOATS, SHADOW_SIZE } from './wgsl/common.js';
 import { FISH, FISH_SHADOW } from './wgsl/fish.js';
 import { ROCK, ROCK_SHADOW, SAND, CORAL, CORAL_SHADOW, BACKGROUND } from './wgsl/scene.js';
-import { PARTICLES, BUBBLES, RAYS, BUBBLES_PER_SOURCE } from './wgsl/fx.js';
+import { PARTICLES, BUBBLES, RAYS, RAYS_UP, BUBBLES_PER_SOURCE } from './wgsl/fx.js';
 import { BLOOM_DOWN, BLOOM_UP, COMPOSITE } from './wgsl/post.js';
 
 const qs = new URLSearchParams(location.search);
@@ -37,6 +37,7 @@ const BU = GPUBufferUsage, TU = GPUTextureUsage, SS = GPUShaderStage;
 const MSAA = 4;
 const HDR = 'rgba16float';
 const BLOOM_LEVELS = 5;
+const SCENE_DEPTH = 'depth24plus';
 // a uniform-buffer copy of the time wraps after this long; fish phases live on the CPU
 const SHADER_TIME_WRAP = 40000;
 
@@ -62,7 +63,27 @@ async function main() {
   if (!navigator.gpu) fail('WebGPU is not available in this browser.');
   const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
   if (!adapter) fail('No WebGPU adapter found.');
-  const device = await adapter.requestDevice();
+  const wantTimestamps = adapter.features.has('timestamp-query');
+  let device;
+  try {
+    device = await adapter.requestDevice({ requiredFeatures: wantTimestamps ? ['timestamp-query'] : [] });
+  } catch (e) {
+    device = await adapter.requestDevice();
+  }
+  const hasTS = device.features.has('timestamp-query');
+  let gpuName = 'unknown';
+  try {
+    const info = adapter.info || (adapter.requestAdapterInfo && await adapter.requestAdapterInfo());
+    if (info) gpuName = info.description || info.device || info.vendor || gpuName;
+  } catch (e) { /* adapter info is optional */ }
+  log(`gpu: ${gpuName}`);
+  const ts = hasTS ? {
+    querySet: device.createQuerySet({ type: 'timestamp', count: 2 }),
+    resolve: device.createBuffer({ size: 16, usage: BU.QUERY_RESOLVE | BU.COPY_SRC }),
+    read: device.createBuffer({ size: 16, usage: BU.MAP_READ | BU.COPY_DST }),
+    pending: false,
+    ms: 0,
+  } : null;
   device.lost.then((i) => log('device lost: ' + i.message));
   device.onuncapturederror = (e) => log('GPU error: ' + e.error.message);
 
@@ -274,6 +295,7 @@ async function main() {
   const sunRgb = [1, 0.97, 0.9];
   const lightViewProj = new Float32Array(16);
   let shadowStamp = '';
+  let shadowRefresh = true;
   // High sun keeps the original shadow frustum. A lower sun (morning, sunset) needs a
   // wider one so the tank still falls inside the map.
   function updateLight() {
@@ -342,10 +364,18 @@ async function main() {
       { binding: 0, visibility: SS.VERTEX | SS.FRAGMENT, buffer: { type: 'uniform' } },
       { binding: 1, visibility: SS.VERTEX | SS.FRAGMENT, texture: { sampleType: 'depth' } },
       { binding: 2, visibility: SS.VERTEX | SS.FRAGMENT, sampler: { type: 'comparison' } },
+      { binding: 3, visibility: SS.FRAGMENT, texture: { sampleType: 'float' } },
+      { binding: 4, visibility: SS.FRAGMENT, sampler: { type: 'filtering' } },
     ],
   });
   const shadowFrameBGL = device.createBindGroupLayout({ label: 'shadow frame', entries: [{ binding: 0, visibility: SS.VERTEX | SS.FRAGMENT, buffer: { type: 'uniform' } }] });
   const raysBGL = device.createBindGroupLayout({ label: 'rays', entries: [{ binding: 0, visibility: SS.FRAGMENT, texture: { sampleType: 'depth', multisampled: true } }] });
+  const raysUpBGL = device.createBindGroupLayout({
+    label: 'rays up', entries: [
+      { binding: 0, visibility: SS.FRAGMENT, texture: { sampleType: 'float' } },
+      { binding: 1, visibility: SS.FRAGMENT, sampler: { type: 'filtering' } },
+    ],
+  });
   const postBGL = device.createBindGroupLayout({
     label: 'bloom', entries: [
       { binding: 0, visibility: SS.FRAGMENT, texture: { sampleType: 'float' } },
@@ -385,7 +415,7 @@ async function main() {
 
   const premult = { color: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha' }, alpha: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha' } };
   const additive = { color: { srcFactor: 'one', dstFactor: 'one' }, alpha: { srcFactor: 'one', dstFactor: 'one' } };
-  const depthState = (write, compare = 'less') => ({ format: 'depth32float', depthWriteEnabled: write, depthCompare: compare });
+  const depthState = (write, compare = 'less') => ({ format: SCENE_DEPTH, depthWriteEnabled: write, depthCompare: compare });
 
   async function scenePipe(label, code, pl, buffers, opts = {}) {
     const module = await shader(code, label);
@@ -418,7 +448,7 @@ async function main() {
   }
 
   const [rockPipe, sandPipe, coralPipe, fishPipe, bgPipe, particlePipe, bubblePipe,
-    rockShadowPipe, coralShadowPipe, fishShadowPipe, raysPipe, downPipe, upPipe, compPipe] = await Promise.all([
+    rockShadowPipe, coralShadowPipe, fishShadowPipe, raysPipe, raysUpPipe, causticPipe, downPipe, upPipe, compPipe] = await Promise.all([
     scenePipe('rock', ROCK, mainLayout, [rockLayout]),
     scenePipe('sand', SAND, mainLayout, [rockLayout]),
     scenePipe('coral', CORAL, mainLayout, [coralVLayout, coralILayout]),
@@ -430,6 +460,8 @@ async function main() {
     shadowPipe('coral shadow', CORAL_SHADOW, shadowLayout, [coralVLayout, coralILayout]),
     shadowPipe('fish shadow', FISH_SHADOW, fishShadowLayout, [fishVLayout, fishILayout]),
     fullscreenPipe('rays', RAYS, raysLayout, HDR, additive),
+    fullscreenPipe('rays up', RAYS_UP, layout(raysUpBGL), HDR, additive),
+    fullscreenPipe('caustics', CAUSTIC_BAKE, layout(shadowFrameBGL), 'rgba8unorm'),
     fullscreenPipe('bloom down', BLOOM_DOWN, layout(postBGL), HDR),
     fullscreenPipe('bloom up', BLOOM_UP, layout(postBGL), HDR, additive),
     fullscreenPipe('composite', COMPOSITE, layout(compBGL), swapFormat),
@@ -443,7 +475,20 @@ async function main() {
   const staticShadow = device.createTexture({ label: 'static shadow', size: [SHADOW_SIZE, SHADOW_SIZE], format: 'depth32float', usage: TU.RENDER_ATTACHMENT | TU.COPY_SRC });
   const dynShadow = device.createTexture({ label: 'shadow', size: [SHADOW_SIZE, SHADOW_SIZE], format: 'depth32float', usage: TU.RENDER_ATTACHMENT | TU.TEXTURE_BINDING | TU.COPY_DST });
   const cmpSampler = device.createSampler({ compare: 'less', magFilter: 'linear', minFilter: 'linear', addressModeU: 'clamp-to-edge', addressModeV: 'clamp-to-edge' });
-  const frameBG = device.createBindGroup({ layout: frameBGL, entries: [{ binding: 0, resource: { buffer: frameUB } }, { binding: 1, resource: dynShadow.createView() }, { binding: 2, resource: cmpSampler }] });
+  const causticTex = device.createTexture({
+    label: 'caustics', size: [CAUSTIC_SIZE, CAUSTIC_SIZE], format: 'rgba8unorm',
+    usage: TU.TEXTURE_BINDING | TU.RENDER_ATTACHMENT,
+  });
+  const causticView = causticTex.createView();
+  const frameBG = device.createBindGroup({
+    layout: frameBGL, entries: [
+      { binding: 0, resource: { buffer: frameUB } },
+      { binding: 1, resource: dynShadow.createView() },
+      { binding: 2, resource: cmpSampler },
+      { binding: 3, resource: causticView },
+      { binding: 4, resource: linearSampler },
+    ],
+  });
   const shadowBG = device.createBindGroup({ layout: shadowFrameBGL, entries: [{ binding: 0, resource: { buffer: frameUB } }] });
 
   const env = cfg.environment;
@@ -474,7 +519,21 @@ async function main() {
       f[80 + i * 4] = s ? s[0] : 0; f[81 + i * 4] = s ? s[1] : 0; f[82 + i * 4] = s ? s[2] : 0; f[83 + i * 4] = s ? 1 : 0;
     }
     f[104] = sunRgb[0]; f[105] = sunRgb[1]; f[106] = sunRgb[2]; f[107] = 0;
+    const rw = Math.max(1, W >> 1), rh = Math.max(1, H >> 1);
+    f[108] = W / rw; f[109] = H / rh; f[110] = 0; f[111] = 0;
+    const range = causticRange();
+    f[112] = range[0]; f[113] = range[1]; f[114] = range[2]; f[115] = range[3];
     device.queue.writeBuffer(frameUB, 0, f);
+  }
+  // s = xz + light shear * depth. Cover the rock field plus the deepest point under this sun.
+  function causticRange() {
+    const ly = Math.max(L[1], 0.25);
+    const sx = L[0] / ly, sz = L[2] / ly;
+    const dMax = TANK.surfaceY + 0.8;
+    const ox0 = Math.min(0, sx * dMax), ox1 = Math.max(0, sx * dMax);
+    const oz0 = Math.min(0, sz * dMax), oz1 = Math.max(0, sz * dMax);
+    const pad = 0.8;
+    return [-14 + ox0 - pad, -11 + oz0 - pad, 14 + ox1 + pad, 0.6 + oz1 + pad];
   }
 
   // static casters (rock and hard corals) are rendered once, and again when the sun moves
@@ -491,6 +550,7 @@ async function main() {
     for (const d of geo.draws) if (!d.soft) pass.drawIndexed(d.indexCount, d.instanceCount, d.firstIndex, d.baseVertex, d.firstInstance);
     pass.end();
     device.queue.submit([enc.finish()]);
+    shadowRefresh = true;
   }
   updateLight();
   shadowStamp = L.map((n) => n.toFixed(4)).join(',');
@@ -509,8 +569,10 @@ async function main() {
     const all = [];
     const add = (t) => { all.push(t); return t; };
     const colorMS = add(tex('color ms', w, h, HDR, TU.RENDER_ATTACHMENT, MSAA));
-    const depthMS = add(tex('depth ms', w, h, 'depth32float', TU.RENDER_ATTACHMENT | TU.TEXTURE_BINDING, MSAA));
+    const depthMS = add(tex('depth ms', w, h, SCENE_DEPTH, TU.RENDER_ATTACHMENT | TU.TEXTURE_BINDING, MSAA));
     const hdr = add(tex('hdr', w, h, HDR, TU.RENDER_ATTACHMENT | TU.TEXTURE_BINDING));
+    const rw = Math.max(1, w >> 1), rh = Math.max(1, h >> 1);
+    const raysTex = add(tex('shafts', rw, rh, HDR, TU.RENDER_ATTACHMENT | TU.TEXTURE_BINDING));
     const levels = [];
     let lw = w, lh = h;
     for (let i = 0; i < BLOOM_LEVELS; i++) {
@@ -532,7 +594,9 @@ async function main() {
     });
     T = {
       all, colorMSView: colorMS.createView(), depthMSView: depthMS.createView(), hdrView: hdr.createView(), levels, down, up,
+      raysView: raysTex.createView(),
       raysBG: device.createBindGroup({ layout: raysBGL, entries: [{ binding: 0, resource: depthMS.createView() }] }),
+      raysUpBG: device.createBindGroup({ layout: raysUpBGL, entries: [{ binding: 0, resource: raysTex.createView() }, { binding: 1, resource: linearSampler }] }),
       compBG: device.createBindGroup({ layout: compBGL, entries: [{ binding: 0, resource: hdr.createView() }, { binding: 1, resource: levels[0].view }, { binding: 2, resource: linearSampler }, { binding: 3, resource: { buffer: compUB } }] }),
     };
     W = w; H = h;
@@ -653,9 +717,23 @@ async function main() {
     if (audio) audio.update(dt, sim);
 
     const enc = device.createCommandEncoder();
-    // dynamic shadow casters on top of the static map
-    enc.copyTextureToTexture({ texture: staticShadow }, { texture: dynShadow }, [SHADOW_SIZE, SHADOW_SIZE]);
+    const stamp = ts && !ts.pending;
     {
+      const pass = enc.beginRenderPass({
+        colorAttachments: [{ view: causticView, clearValue: [1, 1, 0, 1], loadOp: 'clear', storeOp: 'store' }],
+        timestampWrites: stamp ? { querySet: ts.querySet, beginningOfPassWriteIndex: 0 } : undefined,
+      });
+      pass.setPipeline(causticPipe);
+      pass.setBindGroup(0, shadowBG);
+      pass.draw(3);
+      pass.end();
+    }
+    // Fish and soft corals move slowly. At 60 FPS their shadows update every other frame;
+    // a 16 ms lag is a fraction of a shadow texel. At 30 FPS every frame is refreshed.
+    const refreshShadows = shadowRefresh || fpsTarget < 50 || (frameNo & 1) === 0 || (SHOT && frameNo + 1 >= SHOT_FRAMES);
+    if (refreshShadows) {
+      shadowRefresh = false;
+      enc.copyTextureToTexture({ texture: staticShadow }, { texture: dynShadow }, [SHADOW_SIZE, SHADOW_SIZE]);
       const pass = enc.beginRenderPass(passes.shadow);
       pass.setBindGroup(0, shadowBG);
       pass.setPipeline(coralShadowPipe);
@@ -701,11 +779,16 @@ async function main() {
       pass.end();
     }
     if (cfg.effects.lightRaysEnabled && env.lightRayIntensity > 0) {
-      const pass = enc.beginRenderPass({ colorAttachments: [{ view: T.hdrView, loadOp: 'load', storeOp: 'store' }] });
-      pass.setPipeline(raysPipe);
-      pass.setBindGroup(0, frameBG); pass.setBindGroup(1, T.raysBG);
-      pass.draw(3);
-      pass.end();
+      const march = enc.beginRenderPass({ colorAttachments: [{ view: T.raysView, clearValue: [0, 0, 0, 0], loadOp: 'clear', storeOp: 'store' }] });
+      march.setPipeline(raysPipe);
+      march.setBindGroup(0, frameBG); march.setBindGroup(1, T.raysBG);
+      march.draw(3);
+      march.end();
+      const up = enc.beginRenderPass({ colorAttachments: [{ view: T.hdrView, loadOp: 'load', storeOp: 'store' }] });
+      up.setPipeline(raysUpPipe);
+      up.setBindGroup(0, T.raysUpBG);
+      up.draw(3);
+      up.end();
     }
     for (let i = 0; i < BLOOM_LEVELS; i++) {
       const pass = enc.beginRenderPass({ colorAttachments: [{ view: T.levels[i].view, clearValue: [0, 0, 0, 1], loadOp: 'clear', storeOp: 'store' }] });
@@ -720,8 +803,16 @@ async function main() {
     device.queue.writeBuffer(compUB, 0, compF);
     const swapTex = ctx.getCurrentTexture();
     {
-      const pass = enc.beginRenderPass({ colorAttachments: [{ view: swapTex.createView(), clearValue: [0, 0, 0, 1], loadOp: 'clear', storeOp: 'store' }] });
+      const pass = enc.beginRenderPass({
+        colorAttachments: [{ view: swapTex.createView(), clearValue: [0, 0, 0, 1], loadOp: 'clear', storeOp: 'store' }],
+        timestampWrites: stamp ? { querySet: ts.querySet, endOfPassWriteIndex: 1 } : undefined,
+      });
       pass.setPipeline(compPipe); pass.setBindGroup(0, T.compBG); pass.draw(3); pass.end();
+    }
+    if (stamp) {
+      enc.resolveQuerySet(ts.querySet, 0, 2, ts.resolve, 0);
+      enc.copyBufferToBuffer(ts.resolve, 0, ts.read, 0, 16);
+      ts.pending = true;
     }
     let readBuf = null, bpr = 0;
     frameNo++;
@@ -732,13 +823,23 @@ async function main() {
       enc.copyTextureToBuffer({ texture: swapTex }, { buffer: readBuf, bytesPerRow: bpr }, [W, H]);
     }
     device.queue.submit([enc.finish()]);
+    if (stamp) {
+      ts.read.mapAsync(GPUMapMode.READ).then(() => {
+        const r = new BigUint64Array(ts.read.getMappedRange());
+        const ms = Number(r[1] - r[0]) / 1e6;
+        if (ms > 0 && ms < 500) ts.ms = ts.ms ? ts.ms * 0.85 + ms * 0.15 : ms;
+        ts.read.unmap();
+        ts.pending = false;
+      }, () => { ts.pending = false; });
+    }
     if (readBuf) saveShot(readBuf, bpr);
 
     if (cfg.display.showInfo) {
       hudFrames++;
       hudTimer += dt;
       if (hudTimer > 0.5) {
-        hud.textContent = `${(hudFrames / hudTimer).toFixed(0)} fps  ${W}x${H}  scale ${renderScale.toFixed(2)}  target ${fpsTarget}  fish ${sim.fish.length}`;
+        const gpu = ts && ts.ms ? `  gpu ${ts.ms.toFixed(1)} ms` : '';
+        hud.textContent = `${(hudFrames / hudTimer).toFixed(0)} fps  ${W}x${H}  scale ${renderScale.toFixed(2)}  target ${fpsTarget}  fish ${sim.fish.length}${gpu}`;
         if (qs.get('log') === '1' && frameNo % 600 < 40) log(hud.textContent + `  cpu ${cpuMs.toFixed(2)} ms`);
         hudTimer = 0; hudFrames = 0;
       }
@@ -765,7 +866,7 @@ async function main() {
     oc.getContext('2d').putImageData(img, 0, 0);
     const blob = await oc.convertToBlob({ type: 'image/png' });
     await fetch('/__shot?name=' + encodeURIComponent(SHOT), { method: 'POST', body: blob });
-    log('shot saved ' + SHOT);
+    log(`shot saved ${SHOT}  gpu ${ts && ts.ms ? ts.ms.toFixed(2) + ' ms' : 'n/a'}`);
     document.title = 'SHOT DONE';
   }
 

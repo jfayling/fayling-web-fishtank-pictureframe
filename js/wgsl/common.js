@@ -1,8 +1,12 @@
 // Shared WGSL: the per-frame uniform block, noise, caustics, shadows, water absorption and
 // fog, and the underwater lighting model. Shadow-pass shaders get only the uniform block.
 
-export const FRAME_FLOATS = 108;
-export const SHADOW_SIZE = 2048;
+export const FRAME_FLOATS = 116;
+// Half the old map. The comparison kernel is sized so the penumbra stays the same
+// width on the sand; hardware filtering hides the coarser texels.
+export const SHADOW_SIZE = 1024;
+// Projected caustic field, sampled by every shaded pixel instead of recomputed there.
+export const CAUSTIC_SIZE = 1024;
 
 const FRAME = /* wgsl */ `
 diagnostic(off, derivative_uniformity);
@@ -20,6 +24,8 @@ struct Frame {
   drift: vec4f,      // xyz accumulated current displacement (wrapped), w unused
   src: array<vec4f, 6>, // bubble sources: xyz, w = enabled
   sun: vec4f,        // rgb linear sun colour; intensity is lightDir.w
+  aux: vec4f,        // xy = scene pixels per light-shaft pixel
+  sRange: vec4f,     // xy min, zw max of the caustic projection domain
 };
 @group(0) @binding(0) var<uniform> F: Frame;
 `;
@@ -80,7 +86,7 @@ fn ign(p: vec2f) -> f32 { return fract(52.9829189 * fract(dot(p, vec2f(0.0671105
 fn srgb(c: vec3f) -> vec3f { return pow(c, vec3f(2.2)); }
 `;
 
-const CAUSTICS = /* wgsl */ `
+const CAUSTIC_FN = /* wgsl */ `
 // Animated Voronoi edge network: bright filaments where neighbouring cells meet, the way
 // light focused by surface waves draws on the reef.
 fn causticEdge(p: vec2f, t: f32) -> f32 {
@@ -98,19 +104,43 @@ fn causticEdge(p: vec2f, t: f32) -> f32 {
   }
   return sqrt(d2) - sqrt(d1);
 }
+fn causticEdges(s: vec2f, t: f32) -> vec2f {
+  let warp = vec2f(vnoise2(s * 0.31 + vec2f(t * 0.045, 0.0)), vnoise2(s * 0.31 + vec2f(17.0, -t * 0.04))) - 0.5;
+  let uv = s * 1.15 + warp * 1.6;
+  return vec2f(causticEdge(uv, t * 0.8), causticEdge(uv * 1.71 + vec2f(3.1, 7.7), t * 1.05));
+}
+`;
+
+// One projected field per frame. Shading only looks it up and applies the depth blur,
+// which depends on the point being lit and so stays in the material shader.
+const CAUSTICS = /* wgsl */ `
+@group(0) @binding(3) var causticMap: texture_2d<f32>;
+@group(0) @binding(4) var causticSamp: sampler;
 fn causticsAt(P: vec3f) -> f32 {
   let depth = max(F.params.z - P.y, 0.0);
   let L = F.lightDir.xyz;
   let s = P.xz + L.xz / max(L.y, 0.25) * depth;
-  let t = F.camPos.w;
-  let warp = vec2f(vnoise2(s * 0.31 + vec2f(t * 0.045, 0.0)), vnoise2(s * 0.31 + vec2f(17.0, -t * 0.04))) - 0.5;
-  let uv = s * 1.15 + warp * 1.6;
+  let uv = (s - F.sRange.xy) / max(F.sRange.zw - F.sRange.xy, vec2f(1e-4));
+  let e = textureSampleLevel(causticMap, causticSamp, uv, 0.0).rg;
   let blur = mix(0.12, 0.3, saturate(depth / 8.0));
-  let e1 = causticEdge(uv, t * 0.8);
-  let e2 = causticEdge(uv * 1.71 + vec2f(3.1, 7.7), t * 1.05);
-  let c1 = 1.0 - smoothstep(0.0, blur, e1);
-  let c2 = 1.0 - smoothstep(0.0, blur * 1.4, e2);
+  let c1 = 1.0 - smoothstep(0.0, blur, e.r);
+  let c2 = 1.0 - smoothstep(0.0, blur * 1.4, e.g);
   return c1 * 0.7 + c2 * 0.45;
+}
+`;
+
+const CAUSTIC_FS_TRI = /* wgsl */ `
+struct COut { @builtin(position) pos: vec4f };
+@vertex fn vs(@builtin(vertex_index) i: u32) -> COut {
+  let p = vec2f(f32((i << 1u) & 2u), f32(i & 2u)) * 2.0 - 1.0;
+  var o: COut;
+  o.pos = vec4f(p, 0.0, 1.0);
+  return o;
+}
+@fragment fn fs(in: COut) -> @location(0) vec4f {
+  let uv = in.pos.xy / vec2f(${CAUSTIC_SIZE}.0);
+  let s = mix(F.sRange.xy, F.sRange.zw, uv);
+  return vec4f(causticEdges(s, F.camPos.w), 0.0, 1.0);
 }
 `;
 
@@ -118,10 +148,9 @@ const LIGHTING = /* wgsl */ `
 @group(0) @binding(1) var shadowMap: texture_depth_2d;
 @group(0) @binding(2) var shadowSamp: sampler_comparison;
 
-const POISSON = array<vec2f, 12>(
-  vec2f(-0.326, -0.406), vec2f(-0.840, -0.074), vec2f(-0.696, 0.457), vec2f(-0.203, 0.621),
-  vec2f(0.962, -0.195), vec2f(0.473, -0.480), vec2f(0.519, 0.767), vec2f(0.185, -0.893),
-  vec2f(0.507, 0.064), vec2f(0.896, 0.412), vec2f(-0.322, -0.933), vec2f(-0.792, -0.598));
+const POISSON = array<vec2f, 8>(
+  vec2f(-0.840, -0.074), vec2f(-0.696, 0.457), vec2f(-0.203, 0.621), vec2f(0.519, 0.767),
+  vec2f(0.962, -0.195), vec2f(0.185, -0.893), vec2f(-0.322, -0.933), vec2f(0.507, 0.064));
 
 fn shadowAt(P: vec3f, N: vec3f, px: vec2f) -> f32 {
   let q = F.lightViewProj * vec4f(P + N * 0.05, 1.0);
@@ -130,12 +159,13 @@ fn shadowAt(P: vec3f, N: vec3f, px: vec2f) -> f32 {
   let inside = all(uv > vec2f(0.0)) && all(uv < vec2f(1.0)) && q.z < 1.0;
   let a = ign(px) * 6.2831;
   let rot = mat2x2f(cos(a), sin(a), -sin(a), cos(a));
-  let r = 2.2 / ${SHADOW_SIZE}.0;
+  // 1.1/1024 matches the old 2.2/2048 world-space radius.
+  let r = 1.1 / ${SHADOW_SIZE}.0;
   var s = 0.0;
-  for (var i = 0; i < 12; i++) {
+  for (var i = 0; i < 8; i++) {
     s += textureSampleCompareLevel(shadowMap, shadowSamp, uv + rot * POISSON[i] * r, z);
   }
-  return select(1.0, s / 12.0, inside);
+  return select(1.0, s / 8.0, inside);
 }
 
 fn sunColor() -> vec3f { return F.sun.rgb * F.lightDir.w; }
@@ -219,3 +249,6 @@ fn shade(P: vec3f, N: vec3f, s: Surface, px: vec2f) -> vec3f {
 export function common({ shadow = false } = {}) {
   return FRAME + NOISE + (shadow ? '' : CAUSTICS + LIGHTING);
 }
+
+// Full-screen pass that fills the caustic map. Same edge function the materials used to run per pixel.
+export const CAUSTIC_BAKE = FRAME + NOISE + CAUSTIC_FN + CAUSTIC_FS_TRI;

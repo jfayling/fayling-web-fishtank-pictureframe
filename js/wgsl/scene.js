@@ -23,12 +23,18 @@ fn rockHeight(p: vec3f) -> f32 {
 @fragment fn fs(in: VOut) -> @location(0) vec4f {
   let P = in.world;
   var N = normalize(in.nrm);
-  // porous live-rock relief
-  let e = 0.01;
+  // Porous relief. One noise evaluation; the pixel footprint supplies the slope, which
+  // matches a finite difference of about a pixel and skips the three extra probes.
   let h0 = rockHeight(P);
-  let g = vec3f(rockHeight(P + vec3f(e, 0.0, 0.0)) - h0, rockHeight(P + vec3f(0.0, e, 0.0)) - h0, rockHeight(P + vec3f(0.0, 0.0, e)) - h0) / e;
+  let dPx = dpdx(P);
+  let dPy = dpdy(P);
+  let span = max(length(dPx), length(dPy));
   let detailFade = 1.0 - saturate((waterDistance(P) - 3.0) / 12.0);
-  N = normalize(N - (g - N * dot(g, N)) * 0.06 * (0.4 + 0.6 * detailFade));
+  let tlen2 = max(dot(dPx, dPx), 1e-8);
+  let blen2 = max(dot(dPy, dPy), 1e-8);
+  let g = dPx * (dpdx(h0) / tlen2) + dPy * (dpdy(h0) / blen2);
+  let bump = select(0.0, 0.06 * (0.4 + 0.6 * detailFade), span < 0.2);
+  N = normalize(N - (g - N * dot(g, N)) * bump);
 
   let n1 = fbm3(P * 0.9);
   var col = mix(srgb(vec3f(0.40, 0.35, 0.28)), srgb(vec3f(0.58, 0.52, 0.42)), n1);
