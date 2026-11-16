@@ -3,7 +3,25 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Reef Aquarium</title>
+<title>Reef Aquarium · Real-time procedural fish tank in WebGPU</title>
+<meta name="description" content="A living reef aquarium rendered entirely in your browser. Twelve reef fish species swim, school and shelter on their own among procedural live rock and coral, in raw WebGPU with no game engine.">
+<meta name="theme-color" content="#06141c">
+<link rel="canonical" href="https://jfayling.github.io/fayling-web-fishtank-pictureframe/">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230b5f8c'/%3E%3Cpath d='M12 32c8-11 22-13 32 0-10 13-24 11-32 0z' fill='%23ff8a2a'/%3E%3Cpath d='M44 32l10-9v18z' fill='%23ff8a2a'/%3E%3Ccircle cx='20' cy='30' r='2.5' fill='%23071a24'/%3E%3C/svg%3E">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Living Frames">
+<meta property="og:title" content="Reef Aquarium · Real-time procedural fish tank in WebGPU">
+<meta property="og:description" content="Twelve reef fish species with their own behavior, procedural live rock and coral, six underwater scenes. Raw WebGPU, no game engine, one HTML file.">
+<meta property="og:url" content="https://jfayling.github.io/fayling-web-fishtank-pictureframe/">
+<meta property="og:image" content="https://jfayling.github.io/fayling-web-fishtank-pictureframe/docs/social-preview.png">
+<meta property="og:image:width" content="1280">
+<meta property="og:image:height" content="640">
+<meta property="og:image:alt" content="A procedural reef tank with a blue tang, yellow tangs, emperor angelfish, a lionfish and an anthias school among corals, rendered in WebGPU">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Reef Aquarium · Real-time procedural fish tank in WebGPU">
+<meta name="twitter:description" content="A living reef aquarium rendered entirely in your browser. Raw WebGPU, autonomous fish, procedural coral, no game engine.">
+<meta name="twitter:image" content="https://jfayling.github.io/fayling-web-fishtank-pictureframe/docs/social-preview.png">
+<meta name="twitter:image:alt" content="A procedural reef tank with a blue tang, yellow tangs, emperor angelfish, a lionfish and an anthias school among corals, rendered in WebGPU">
 <style>
   html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
   canvas { display: block; width: 100vw; height: 100vh; }
@@ -177,7 +195,7 @@
     to { transform: translateY(-50%); }
   }
   .weather-error { padding: 11px 14px; font-size: 12px; opacity: .72; }
-  #err { display: none; position: fixed; inset: 0; z-index: 40; align-items: center; justify-content: center; padding: 2em; color: #9ab; font: 18px/1.5 system-ui, sans-serif; text-align: center; background: #021018; white-space: pre-wrap; }
+  #err { display: none; position: fixed; inset: 0; z-index: 40; align-items: center; justify-content: center; padding: 2em max(2em, calc(50vw - 340px)); color: #9ab; font: 18px/1.5 system-ui, sans-serif; text-align: center; background: #021018; white-space: pre-wrap; }
   #loading { position: fixed; inset: 0; z-index: 30; display: grid; place-items: center; background: #000; color: #f7f4ee;
              font-family: system-ui, sans-serif; transition: opacity 1.8s ease; }
   #loading::before { content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 38vh; pointer-events: none;
@@ -234,7 +252,8 @@
   <span class="clock-date"></span>
 </time>
 <aside id="weather-widget" data-position="bottom-left" aria-label="Current weather" aria-live="polite" hidden inert></aside>
-<div id="err"></div>
+<div id="err" role="alert"></div>
+<noscript><p style="position:fixed;inset:0;z-index:50;margin:0;display:grid;place-items:center;padding:2em;background:#021018;color:#9ab;font:18px/1.5 system-ui,sans-serif;text-align:center">The aquarium needs JavaScript and WebGPU.</p></noscript>
 <script type="module" src="js/main.js"></script>
 </body>
 </html>

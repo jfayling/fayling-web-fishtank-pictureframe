@@ -1,0 +1,68 @@
+name: Bug report
+description: Something renders wrong, runs slowly, or does not start
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! [TROUBLESHOOTING.md](https://github.com/jfayling/fayling-web-fishtank-pictureframe/blob/main/docs/TROUBLESHOOTING.md) covers the most common startup problems.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What you saw, and what you expected instead. Screenshots help a lot.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: How to reproduce
+      description: The URL you opened (including any ?options) and what you did.
+      placeholder: |
+        1. Open https://jfayling.github.io/fayling-web-fishtank-pictureframe/?scene=sunset
+        2. Press ]
+        3. ...
+    validations:
+      required: true
+  - type: dropdown
+    id: how
+    attributes:
+      label: How did you run it?
+      options:
+        - Live demo (GitHub Pages)
+        - aquarium.min.html / aquarium.html opened from disk
+        - Dev server (npm start)
+        - Self-hosted elsewhere
+    validations:
+      required: true
+  - type: input
+    id: browser
+    attributes:
+      label: Browser and version
+      placeholder: Chrome 131, Edge 131, Safari 26, Firefox 141 ...
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: Windows 11, macOS 26, ChromeOS, Android 15 ...
+    validations:
+      required: true
+  - type: input
+    id: gpu
+    attributes:
+      label: GPU
+      description: From chrome://gpu, the system settings, or the ?info=1 readout.
+      placeholder: NVIDIA RTX 3060, Apple M2, Intel UHD 770 ...
+  - type: input
+    id: perf
+    attributes:
+      label: ?info=1 readout (for performance issues)
+      placeholder: 58 fps  1920x1080  scale 1.00  target 60  fish 34  gpu 9.1 ms
+  - type: textarea
+    id: console
+    attributes:
+      label: Console output
+      description: Press F12 and copy any errors or warnings.
+      render: text

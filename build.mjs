@@ -19,7 +19,10 @@ const stripModuleSyntax = (src) => src
   .replace(/^import[\s\S]*?from\s+['"][^'"]+['"];\s*$/gm, '')                 // drop imports
   .replace(/^export\s+(const|function|async function|let|class)\s/gm, '$1 ');
 
-const page = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+// Sources are read with LF line endings so a Windows checkout (CRLF) and CI produce
+// byte-identical bundles; CI rebuilds and fails if the committed bundles are stale.
+const read = (f) => fs.readFileSync(path.join(root, f), 'utf8').replace(/\r\n/g, '\n');
+const page = read('index.html');
 const SCRIPT_TAG = '<script type="module" src="js/main.js"></script>';
 const write = (name, html) => {
   fs.writeFileSync(path.join(root, name), html);
@@ -41,7 +44,7 @@ function assertModuleParses(source) {
 
 // ---- readable bundle --------------------------------------------------------------------
 let code = '';
-for (const f of order) code += `// ---- ${f} ----\n${stripModuleSyntax(fs.readFileSync(path.join(root, f), 'utf8'))}\n`;
+for (const f of order) code += `// ---- ${f} ----\n${stripModuleSyntax(read(f))}\n`;
 assertModuleParses(code);
 write('aquarium.html', page.replace(SCRIPT_TAG, () => `<script type="module">\n${code}\n</script>`));
 
@@ -70,7 +73,7 @@ function minifyTemplates(src) {
 }
 let minJs = '';
 for (const f of order) {
-  const src = fs.readFileSync(path.join(root, f), 'utf8');
+  const src = read(f);
   minJs += stripModuleSyntax(wgslModules.includes(f) ? minifyTemplates(src) : src) + '\n';
 }
 

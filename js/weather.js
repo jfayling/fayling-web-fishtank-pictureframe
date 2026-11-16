@@ -166,7 +166,7 @@ export function createWeather(root, cfg, status) {
       <div><button type="button" class="weather-place" title="${escapeHTML(location.name || location.query)}" aria-label="Change weather location, ${escapeHTML(location.name || location.query)}">${escapeHTML(location.name || location.query)}</button><div class="weather-condition">${label}</div></div>
       ${tempBlock(weather, current, unit, high, low)}
       </div>${details.length ? `<div class="weather-details">${details.join('')}</div>` : ''}${forecastHTML}
-      <time class="weather-updated" datetime="${updated.toISOString()}">Updated ${updatedText}</time></div>`;
+      <time class="weather-updated" datetime="${updated.toISOString()}">Updated ${updatedText} · Open-Meteo</time></div>`;
     if (root.querySelector('.weather-alert-scroll')) requestAnimationFrame(() => playAlertScroll(root));
   }
 

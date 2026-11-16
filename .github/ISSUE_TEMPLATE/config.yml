@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Troubleshooting guide
+    url: https://github.com/jfayling/fayling-web-fishtank-pictureframe/blob/main/docs/TROUBLESHOOTING.md
+    about: WebGPU not available, black screen, slow frame rate, no sound
+  - name: Browser support
+    url: https://github.com/jfayling/fayling-web-fishtank-pictureframe/blob/main/docs/BROWSER_SUPPORT.md
+    about: Which browsers and platforms can run the aquarium

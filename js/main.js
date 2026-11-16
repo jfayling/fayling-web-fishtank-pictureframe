@@ -3,6 +3,7 @@
 // URL options (normal operation needs none):
 //   ?info=1                 frame-rate / resolution readout
 //   ?shot=name.png&frames=N render N frames at a fixed 1/60 s step, save a PNG via the dev server
+//   &seq=K&step=S           with ?shot: save K frames, S frames apart, as name-0000.png ... (animations)
 //   ?w=1920&h=1080          force the render size (screenshots)
 //   ?view=lineup            one fish of every species side by side (model inspection)
 //   ?cam=x,y,z,tx,ty,tz     override the camera
@@ -32,9 +33,12 @@ import { BLOOM_DOWN, BLOOM_UP, COMPOSITE } from './wgsl/post.js';
 const qs = new URLSearchParams(location.search);
 const SHOT = qs.get('shot');
 const SHOT_FRAMES = Number(qs.get('frames')) || 240;
+const SHOT_SEQ = Math.max(1, Math.floor(Number(qs.get('seq')) || 1));
+const SHOT_STEP = Math.max(1, Math.floor(Number(qs.get('step')) || 1));
 const FISH_CAP = 80;
 const VIEW = qs.get('view') || '';
-const BU = GPUBufferUsage, TU = GPUTextureUsage, SS = GPUShaderStage;
+// read through globalThis so a browser without WebGPU reaches the explanation in main()
+const BU = globalThis.GPUBufferUsage, TU = globalThis.GPUTextureUsage, SS = globalThis.GPUShaderStage;
 const MSAA = 4;
 const HDR = 'rgba16float';
 const BLOOM_LEVELS = 5;
@@ -86,14 +90,23 @@ function dropLoad() {
   loadingEl?.remove();
 }
 
-function fail(msg) {
+const BROWSER_HINT = 'The aquarium needs WebGPU. It runs in current Chrome or Edge (version 113 or newer) on '
+  + 'Windows, macOS and ChromeOS, Chrome on recent Android devices, Safari 26 or newer, and Firefox 141 or '
+  + 'newer on Windows. On Linux, Chrome may need WebGPU turned on at chrome://flags/#enable-unsafe-webgpu.';
+
+function showError(msg) {
   dropLoad();
   const el = document.getElementById('err');
   el.textContent = msg;
   el.style.display = 'flex';
+}
+function fail(msg) {
+  showError(msg);
   log('FATAL ' + msg);
   if (SHOT) document.title = 'SHOT DONE';
-  throw new Error(msg);
+  const e = new Error(msg);
+  e.reported = true;
+  throw e;
 }
 window.addEventListener('error', (e) => log('error: ' + e.message + ' @' + e.filename + ':' + e.lineno));
 window.addEventListener('unhandledrejection', (e) => log('rejection: ' + (e.reason && (e.reason.stack || e.reason.message) || e.reason)));
@@ -103,9 +116,14 @@ const linearColor = (hex) => hexToRgb(hex).map(srgbToLinear);
 async function main() {
   const { cfg, visitOnly } = prepareConfig();
   await paintLoad('Looking for a graphics device', 0.08);
-  if (!navigator.gpu) fail('WebGPU is not available in this browser.');
+  if (!navigator.gpu && !window.isSecureContext) {
+    fail('WebGPU only works on secure pages.\n\nOpen the aquarium over https, from localhost, or as a local file.');
+  }
+  if (!navigator.gpu) fail('WebGPU is not available in this browser.\n\n' + BROWSER_HINT);
   const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
-  if (!adapter) fail('No WebGPU adapter found.');
+  if (!adapter) fail('No WebGPU graphics adapter was found.\n\nThe browser supports WebGPU, but it could not use this '
+    + 'graphics card. Check that hardware acceleration is turned on in the browser settings and that the graphics '
+    + 'driver is up to date.\n\n' + BROWSER_HINT);
   const wantTimestamps = adapter.features.has('timestamp-query');
   await paintLoad('Starting the graphics device', 0.16);
   let device;
@@ -128,7 +146,10 @@ async function main() {
     pending: false,
     ms: 0,
   } : null;
-  device.lost.then((i) => log('device lost: ' + i.message));
+  device.lost.then((i) => {
+    log('device lost: ' + i.message);
+    showError('The graphics device stopped responding.\n\nReload the page to restart the aquarium.');
+  });
   device.onuncapturederror = (e) => log('GPU error: ' + e.error.message);
 
   const canvas = document.getElementById('c');
@@ -715,7 +736,7 @@ async function main() {
   let audio = cfg.audio.enabled ? createAquariumAudio(cfg.audio) : null;
   const soundtrack = createSoundtrack(cfg.music, log);
   let time = Number(qs.get('t')) || 0, last = performance.now(), lastShown = 0, frameNo = 0, fade = SHOT ? 1 : 0;
-  let shooting = false, hudTimer = 0, hudFrames = 0, cpuMs = 0, nextDue = 0, pictureShown = false;
+  let shooting = false, shotsTaken = 0, hudTimer = 0, hudFrames = 0, cpuMs = 0, nextDue = 0, pictureShown = false;
   const curVec = { x: 0, y: 0, z: 0 };
   const passes = {
     shadow: { colorAttachments: [], depthStencilAttachment: { view: dynShadow.createView(), depthLoadOp: 'load', depthStoreOp: 'store' } },
@@ -863,10 +884,12 @@ async function main() {
       enc.copyBufferToBuffer(ts.resolve, 0, ts.read, 0, 16);
       ts.pending = true;
     }
-    let readBuf = null, bpr = 0;
+    let readBuf = null, bpr = 0, shotName = SHOT;
     frameNo++;
-    if (SHOT && frameNo >= SHOT_FRAMES) {
-      shooting = true;
+    if (SHOT && frameNo >= SHOT_FRAMES && (frameNo - SHOT_FRAMES) % SHOT_STEP === 0 && shotsTaken < SHOT_SEQ) {
+      if (SHOT_SEQ > 1) shotName = SHOT.replace(/(\.png)?$/i, `-${String(shotsTaken).padStart(4, '0')}.png`);
+      shotsTaken++;
+      shooting = shotsTaken >= SHOT_SEQ;
       bpr = Math.ceil(W * 4 / 256) * 256;
       readBuf = device.createBuffer({ size: bpr * H, usage: BU.MAP_READ | BU.COPY_DST });
       enc.copyTextureToBuffer({ texture: swapTex }, { buffer: readBuf, bytesPerRow: bpr }, [W, H]);
@@ -886,7 +909,7 @@ async function main() {
         ts.pending = false;
       }, () => { ts.pending = false; });
     }
-    if (readBuf) saveShot(readBuf, bpr);
+    if (readBuf) saveShot(readBuf, bpr, shotName, shooting);
 
     if (cfg.display.showInfo) {
       hudFrames++;
@@ -901,7 +924,7 @@ async function main() {
     lastShown = now;
   }
 
-  async function saveShot(buf, bpr) {
+  async function saveShot(buf, bpr, name, last) {
     await buf.mapAsync(GPUMapMode.READ);
     const src = new Uint8Array(buf.getMappedRange());
     const img = new ImageData(W, H);
@@ -919,9 +942,9 @@ async function main() {
     const oc = new OffscreenCanvas(W, H);
     oc.getContext('2d').putImageData(img, 0, 0);
     const blob = await oc.convertToBlob({ type: 'image/png' });
-    await fetch('/__shot?name=' + encodeURIComponent(SHOT), { method: 'POST', body: blob });
-    log(`shot saved ${SHOT}  gpu ${ts && ts.ms ? ts.ms.toFixed(2) + ' ms' : 'n/a'}`);
-    document.title = 'SHOT DONE';
+    await fetch('/__shot?name=' + encodeURIComponent(name), { method: 'POST', body: blob });
+    log(`shot saved ${name}  gpu ${ts && ts.ms ? ts.ms.toFixed(2) + ' ms' : 'n/a'}`);
+    if (last) document.title = 'SHOT DONE';
   }
 
   // presentation: fullscreen on the first interaction, cursor hidden while idle
@@ -1003,7 +1026,8 @@ async function main() {
 
 main().catch((e) => {
   dropLoad();
-  if (!String(e.message).startsWith('WebGPU') && !String(e.message).startsWith('No WebGPU') && !String(e.message).startsWith('Shader')) {
-    log('main failed: ' + (e.stack || e));
-  }
+  if (e && e.reported) return;
+  log('main failed: ' + (e && e.stack || e));
+  showError('The aquarium could not start.\n\n' + (e && e.message || e) + '\n\nReload the page to try again.');
+  if (SHOT) document.title = 'SHOT DONE';
 });

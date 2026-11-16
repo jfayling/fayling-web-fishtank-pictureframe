@@ -151,3 +151,9 @@ vite.config.ts.timestamp-*
 # screenshots from automated visual checks
 shots/
 
+
+# assembled GitHub Pages site (tools/assemble-site.mjs)
+_site/
+
+# local release artifacts
+release/

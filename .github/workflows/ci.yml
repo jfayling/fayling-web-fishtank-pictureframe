@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches-ignore: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: Standalone bundles are up to date
+        run: |
+          if ! git diff --quiet -- aquarium.html aquarium.min.html; then
+            echo "::error::aquarium.html / aquarium.min.html are stale. Run npm run build and commit the result."
+            git diff --stat -- aquarium.html aquarium.min.html
+            exit 1
+          fi
+      - run: node tools/assemble-site.mjs _site
+      - run: node tools/validate.mjs _site

@@ -1,13 +1,27 @@
 {
   "name": "fayling-web-fishtank-pictureframe",
   "version": "1.0.0",
-  "description": "Large-screen WebGPU reef aquarium picture frame: procedural corals, live rock and twelve species of reef fish with autonomous behaviour.",
+  "description": "Real-time procedural reef aquarium in raw WebGPU with autonomous fish behavior, living coral, customizable underwater scenes, and no game engine.",
   "license": "MIT",
   "private": true,
   "type": "module",
+  "homepage": "https://jfayling.github.io/fayling-web-fishtank-pictureframe/",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jfayling/fayling-web-fishtank-pictureframe.git"
+  },
+  "bugs": {
+    "url": "https://github.com/jfayling/fayling-web-fishtank-pictureframe/issues"
+  },
+  "keywords": ["webgpu", "wgsl", "aquarium", "fishtank", "procedural-generation", "fish-simulation", "boids", "screensaver", "generative-art"],
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
     "start": "node server.mjs",
-    "build": "node build.mjs"
+    "build": "node build.mjs",
+    "validate": "node tools/validate.mjs",
+    "site": "node build.mjs && node tools/assemble-site.mjs _site && node tools/validate.mjs _site"
   },
   "devDependencies": {
     "esbuild": "^0.25.0"
